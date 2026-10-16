@@ -1,0 +1,23 @@
+{
+  "name": "Paywarden",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:22-bookworm",
+  "forwardPorts": [3000],
+  "portsAttributes": {
+    "3000": { "label": "Paywarden API", "onAutoForward": "notify" }
+  },
+  "postCreateCommand": "npm install",
+  "secrets": {
+    "PAYPAL_CLIENT_ID": { "description": "PayPal Developer Dashboard > Apps & Credentials > Sandbox app > Client ID" },
+    "PAYPAL_CLIENT_SECRET": { "description": "Same app > Secret key" },
+    "PAYPAL_WEBHOOK_ID": { "description": "Developer Dashboard > your app > Webhooks > Webhook ID" },
+    "ANTHROPIC_API_KEY": { "description": "Anthropic API key. Optional: without it the offline rule-based AI fallback is used." },
+    "AGENT_API_TOKEN": { "description": "Token the AI agent uses. Any long random string." },
+    "OWNER_API_TOKEN": { "description": "Token only the human owner uses. Different from the agent token." },
+    "PUBLIC_BASE_URL": { "description": "Forwarded Codespaces URL for port 3000, e.g. https://<name>-3000.app.github.dev" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": ["vitest.explorer"]
+    }
+  }
+}
