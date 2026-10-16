@@ -64,8 +64,14 @@ export class PayPalClient implements PayPalPort {
     });
     const json = (await res.json().catch(() => ({}))) as Record<string, unknown>;
     if (!res.ok) {
+      const details = Array.isArray(json['details']) ? (json['details'] as Array<Record<string, unknown>>) : [];
+      const issues = details
+        .map((d) => [d['issue'], d['description']].filter((x) => typeof x === 'string').join(': '))
+        .filter(Boolean)
+        .join('; ');
+      const debugId = typeof json['debug_id'] === 'string' ? ` (debug_id ${json['debug_id']})` : '';
       throw new PayPalError(
-        `PayPal ${method} ${path} failed: ${String(json['name'] ?? res.status)}`,
+        `PayPal ${method} ${path} failed: ${String(json['name'] ?? res.status)}${issues ? ` [${issues}]` : ''}${debugId}`,
         res.status,
         typeof json['debug_id'] === 'string' ? json['debug_id'] : undefined,
         json['details'],

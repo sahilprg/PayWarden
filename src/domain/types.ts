@@ -44,6 +44,8 @@ export interface OrderRecord {
   capturedMinor?: number;
   refundedMinor: number;
   refundCount: number;
+  /** Capture attempts PayPal definitively rejected (4xx). Each one moves the next attempt to a fresh PayPal-Request-Id. */
+  rejectedCaptureAttempts?: number;
   createdAt: string;
 }
 

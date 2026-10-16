@@ -24,7 +24,7 @@ import type {
 } from '../domain/types.js';
 import type { MandateSigner } from '../mandate/sign.js';
 import { summarizeMandate } from '../mandate/summary.js';
-import type { PayPalPort } from '../paypal/port.js';
+import { PayPalError, type PayPalPort } from '../paypal/port.js';
 import { evaluatePolicy, tighten } from '../policy/engine.js';
 import type { Store } from '../store/store.js';
 import { canonicalJson } from '../util/canonical.js';
@@ -499,8 +499,13 @@ export class Gateway {
       this.d.audit.append('CAPTURE_BLOCKED', { orderId, code: problem.code });
       throw new GatewayError(problem.code, `Capture blocked: ${problem.message}`, 409);
     }
+    // A capture PayPal definitively rejected (4xx, e.g. ORDER_NOT_APPROVED) moved no money, so the next
+    // attempt may use a fresh PayPal-Request-Id; otherwise PayPal could replay the cached rejection.
+    // Network errors and 5xx keep the same id, because that capture may have gone through.
+    const rejected = order.rejectedCaptureAttempts ?? 0;
+    const requestId = rejected === 0 ? `${order.id}:capture` : `${order.id}:capture:${rejected}`;
     try {
-      const res = await this.d.paypal.captureOrder(order.paypalOrderId, `${order.id}:capture`);
+      const res = await this.d.paypal.captureOrder(order.paypalOrderId, requestId);
       if (res.status !== 'COMPLETED' || !res.captureId) {
         this.d.audit.append('CAPTURE_INCOMPLETE', { orderId, status: res.status });
         throw new GatewayError('CAPTURE_INCOMPLETE', `PayPal reported capture status ${res.status}.`, 409);
@@ -516,6 +521,7 @@ export class Gateway {
     } catch (e) {
       if (e instanceof GatewayError) throw e;
       const message = e instanceof Error ? e.message : 'unknown error';
+      if (e instanceof PayPalError && e.status >= 400 && e.status < 500) order.rejectedCaptureAttempts = rejected + 1;
       this.d.audit.append('PAYPAL_ERROR', { step: 'capture', orderId, message });
       throw new GatewayError('CAPTURE_FAILED', `PayPal capture failed: ${message}`, 502);
     }

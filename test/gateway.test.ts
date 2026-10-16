@@ -44,6 +44,28 @@ describe('happy path', () => {
     expect(env.fake.calls.capture).toBe(1);
   });
 
+  it('after PayPal rejects a capture (4xx), retries with a fresh request id; after a network error, reuses it', async () => {
+    const env = await makeEnv();
+    const r = await buyCharger(env);
+    const ids: string[] = [];
+    const real = env.fake.captureOrder.bind(env.fake);
+    let failNetwork = false;
+    env.fake.captureOrder = async (id: string, requestId: string) => {
+      ids.push(requestId);
+      if (failNetwork) throw new Error('socket hang up');
+      return real(id, requestId);
+    };
+    await expect(env.gateway.capture(r.orderId!)).rejects.toMatchObject({ code: 'CAPTURE_FAILED' }); // not approved: 422
+    await expect(env.gateway.capture(r.orderId!)).rejects.toMatchObject({ code: 'CAPTURE_FAILED' }); // still not approved
+    env.fake.simulatePayerApproval(r.paypalOrderId!);
+    failNetwork = true;
+    await expect(env.gateway.capture(r.orderId!)).rejects.toMatchObject({ code: 'CAPTURE_FAILED' }); // network: may have happened
+    failNetwork = false;
+    expect((await env.gateway.capture(r.orderId!)).status).toBe('captured');
+    expect(ids).toEqual([`${r.orderId}:capture`, `${r.orderId}:capture:1`, `${r.orderId}:capture:2`, `${r.orderId}:capture:2`]);
+    expect(env.fake.calls.capture).toBe(1);
+  });
+
   it('leaves a verifiable audit trail of the whole lifecycle', async () => {
     const env = await makeEnv();
     const r = await buyCharger(env);

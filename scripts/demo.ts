@@ -93,14 +93,23 @@ async function main() {
   info(auth.json.approveUrl);
 
   const fakeApprove = await api('POST', `/dev/fake/payer-approve/${auth.json.paypalOrderId}`, undefined);
+  let cap: { status: number; json: any };
   if (fakeApprove.status === 200) {
     info('(offline fake mode: simulated the payer approving)');
+    cap = await api('POST', `/v1/orders/${auth.json.orderId}/capture`, AGENT);
   } else {
+    info('Log in with your sandbox PERSONAL (buyer) account and click through to the final pay button.');
+    info('Wait until PayPal redirects you away (an error page at the end is fine), then come back here.');
     const rl = createInterface({ input: process.stdin, output: process.stdout });
-    await rl.question('      Approve it as the sandbox buyer, then press Enter to capture… ');
+    await rl.question('      Press Enter to capture… ');
+    cap = await api('POST', `/v1/orders/${auth.json.orderId}/capture`, AGENT);
+    for (let attempt = 1; attempt <= 5 && cap.status !== 200 && JSON.stringify(cap.json).includes('ORDER_NOT_APPROVED'); attempt++) {
+      info('PayPal says the buyer has not approved this order yet. Finish approving in the browser.');
+      await rl.question('      Press Enter to try the capture again… ');
+      cap = await api('POST', `/v1/orders/${auth.json.orderId}/capture`, AGENT);
+    }
     rl.close();
   }
-  const cap = await api('POST', `/v1/orders/${auth.json.orderId}/capture`, AGENT);
   if (cap.status !== 200) throw new Error(`capture failed: ${JSON.stringify(cap.json)}`);
   ok(`Captured ${cap.json.captureId}`);
 

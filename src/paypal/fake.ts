@@ -34,6 +34,7 @@ export class FakePayPal implements PayPalPort {
   private seq = 0;
   private createdByRequest = new Map<string, CreateOrderResult>();
   private capturedByRequest = new Map<string, CaptureResult>();
+  private rejectedRequests = new Set<string>();
   private refundedByRequest = new Map<string, RefundResult>();
 
   async createOrder(input: CreateOrderInput): Promise<CreateOrderResult> {
@@ -69,7 +70,12 @@ export class FakePayPal implements PayPalPort {
     if (prior) return prior;
     const o = this.orders.get(paypalOrderId);
     if (!o) throw new PayPalError('Order not found', 404);
-    if (!o.approved) throw new PayPalError('ORDER_NOT_APPROVED', 422);
+    if (prior === undefined && this.rejectedRequests.has(requestId)) throw new PayPalError('ORDER_NOT_APPROVED (replayed for the same PayPal-Request-Id)', 422);
+    if (!o.approved) {
+      // Conservative model: assume PayPal may replay a rejection for a reused PayPal-Request-Id.
+      this.rejectedRequests.add(requestId);
+      throw new PayPalError('ORDER_NOT_APPROVED', 422);
+    }
     this.calls.capture++;
     o.captureId = `FAKE-CAP-${++this.seq}`;
     const result = { status: 'COMPLETED', captureId: o.captureId, amountMinor: o.totalMinor, currency: o.currency };
