@@ -39,7 +39,8 @@ export interface MessagesClient {
 }
 
 /**
- * Claude-backed provider. Every output is parsed and validated with zod before
+ * LLM-backed provider (Claude by default; any OpenAI-compatible API via
+ * openAiCompatibleClient). Every output is parsed and validated with zod before
  * the gateway sees it; anything malformed throws, and the gateway treats a
  * throw as "ask a human".
  */
@@ -47,9 +48,9 @@ export class AnthropicProvider implements AIProvider {
   readonly name: string;
   private readonly client: MessagesClient;
 
-  constructor(private readonly opts: { apiKey: string; model: string; client?: MessagesClient }) {
+  constructor(private readonly opts: { apiKey: string; model: string; client?: MessagesClient; label?: string; displayName?: string }) {
     this.client = opts.client ?? (new Anthropic({ apiKey: opts.apiKey }) as unknown as MessagesClient);
-    this.name = `anthropic:${opts.model}`;
+    this.name = opts.displayName ?? `${opts.label ?? 'anthropic'}:${opts.model}`;
   }
 
   private async askJson<T>(system: string, user: string, schema: ZodType<T>, maxTokens = 800): Promise<T> {

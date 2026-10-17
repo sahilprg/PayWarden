@@ -16,7 +16,7 @@ app.listen(config.port, () => {
   console.log(line);
   console.log(`Paywarden listening on :${config.port}`);
   console.log(`  PayPal : ${boot.paypalMode === 'sandbox' ? `SANDBOX (${config.paypal.baseUrl})` : 'FAKE (no PAYPAL_CLIENT_ID/SECRET set, nothing reaches PayPal)'}`);
-  console.log(`  AI     : ${boot.ai.name}${config.anthropic.apiKey ? '' : '  (no ANTHROPIC_API_KEY, using the offline fallback)'}`);
+  console.log(`  AI     : ${boot.ai.name}${config.anthropic.apiKey || config.openai.apiKey ? '' : '  (no AI key set, using the weak offline fallback; set AI_API_KEY or ANTHROPIC_API_KEY)'}`);
   if (config.usingDevTokens) console.log('  WARNING: using built-in dev tokens. Set AGENT_API_TOKEN and OWNER_API_TOKEN.');
   if (boot.paypalMode === 'sandbox' && !config.paypal.webhookId) console.log('  NOTE   : PAYPAL_WEBHOOK_ID not set, webhooks will be rejected.');
   console.log(line);

@@ -3,6 +3,7 @@ export interface Config {
   publicBaseUrl: string;
   paypal: { clientId?: string; clientSecret?: string; webhookId?: string; baseUrl: string };
   anthropic: { apiKey?: string; model: string };
+  openai: { apiKey?: string; baseUrl: string; model: string };
   agentToken: string;
   ownerToken: string;
   signingKeyPem?: string;
@@ -33,7 +34,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       webhookId: env['PAYPAL_WEBHOOK_ID'] || undefined,
       baseUrl,
     },
-    anthropic: { apiKey: env['ANTHROPIC_API_KEY'] || undefined, model: env['ANTHROPIC_MODEL'] ?? 'claude-sonnet-5-5' },
+    anthropic: { apiKey: env['ANTHROPIC_API_KEY'] || undefined, model: env['ANTHROPIC_MODEL'] || 'claude-sonnet-5-5' },
+    openai: {
+      apiKey: env['AI_API_KEY'] || undefined,
+      baseUrl: (env['AI_BASE_URL'] || 'https://generativelanguage.googleapis.com/v1beta/openai').replace(/\/$/, ''),
+      model: env['AI_MODEL'] || 'gemini-3-flash-preview,gemini-3.1-flash-lite-preview,gemini-3.8-flash',
+    },
     agentToken: agentToken ?? 'dev-agent-token',
     ownerToken: ownerToken ?? 'dev-owner-token',
     signingKeyPem: env['MANDATE_SIGNING_KEY_PEM']?.replace(/\\n/g, '\n') || undefined,

@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { ZodError } from 'zod';
 import type { AIProvider } from '../ai/provider.js';
 import { heuristicInjectionScan } from '../ai/injection.js';
 import type { AuditLog } from '../audit/chain.js';
@@ -75,7 +76,18 @@ export class Gateway {
   // ───────────────────────── Mandates & quotes (owner actions) ─────────────────────────
 
   async compileMandate(naturalLanguage: string): Promise<{ draft: DraftMandate; summary: string[] }> {
-    const draft = await this.d.ai.compileMandate(naturalLanguage);
+    let draft: DraftMandate;
+    try {
+      draft = await this.d.ai.compileMandate(naturalLanguage);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      // A missing limit is the person's to fix; everything else is the AI failing (network,
+      // key, quota, or malformed output). Either way nothing is created: fail closed.
+      if (/per-purchase limit/i.test(message)) throw e;
+      const detail = e instanceof ZodError ? 'the model returned a mandate that failed validation' : message;
+      this.d.audit.append('MANDATE_COMPILE_FAILED', { provider: this.d.ai.name, detail });
+      throw new GatewayError('AI_UNAVAILABLE', `The AI could not compile the mandate (${detail}). Nothing was created.`, 502);
+    }
     const summary = summarizeMandate(draft);
     this.d.audit.append('MANDATE_COMPILED', { provider: this.d.ai.name, naturalLanguage, draft });
     return { draft, summary };

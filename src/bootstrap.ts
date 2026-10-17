@@ -36,7 +36,7 @@ export function createGateway(opts: BootOptions) {
     paypalMode = 'fake';
   }
 
-  const ai = opts.ai ?? createAIProvider(config.anthropic);
+  const ai = opts.ai ?? createAIProvider({ anthropic: config.anthropic, openai: config.openai });
   const catalog = opts.catalog ?? new DemoCatalog();
   const store = new Store();
   const audit = new AuditLog(now);

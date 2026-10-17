@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { FakePayPal } from '../src/paypal/fake.js';
 import type { CreateOrderInput } from '../src/paypal/port.js';
-import { buyCharger, claim, makeEnv, proposal, quote, StubAI, type Env } from './helpers.js';
+import { buyCharger, claim, makeEnv, NL, proposal, quote, StubAI, type Env } from './helpers.js';
+import { DraftMandateSchema } from '../src/domain/schemas.js';
 
 const codes = (r: { decision: { reasons: { code: string }[] } }) => r.decision.reasons.map((x) => x.code);
 const auditTypes = (env: Env) => env.audit.entries().map((e) => e.type);
@@ -387,6 +388,18 @@ describe('quotes and mandates (owner actions)', () => {
     const before = env.store.mandates.size;
     await expect(env.gateway.compileMandate('buy me something nice')).rejects.toThrow(/per-purchase limit/);
     expect(env.store.mandates.size).toBe(before);
+  });
+
+  it('an AI outage or malformed AI output during compile is a clear 502, creates nothing, and is audited', async () => {
+    const env = await makeEnv();
+    const before = env.store.mandates.size;
+    const ai = env.ai as { compileMandate: (nl: string) => Promise<unknown> };
+    ai.compileMandate = async () => { throw new Error('AI API error 401: API key not valid'); };
+    await expect(env.gateway.compileMandate(NL)).rejects.toMatchObject({ code: 'AI_UNAVAILABLE', httpStatus: 502, message: expect.stringMatching(/401: API key not valid/) });
+    ai.compileMandate = async () => DraftMandateSchema.parse({ task: 'x' });
+    await expect(env.gateway.compileMandate(NL)).rejects.toMatchObject({ code: 'AI_UNAVAILABLE', message: expect.stringMatching(/failed validation/) });
+    expect(env.store.mandates.size).toBe(before);
+    expect(env.audit.entries().filter((e) => e.type === 'MANDATE_COMPILE_FAILED')).toHaveLength(2);
   });
 
   it('reports state for a dashboard, including audit integrity', async () => {

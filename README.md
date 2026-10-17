@@ -25,8 +25,9 @@ Built for the *Build What's Next with PayPal and AI* hackathon.
 | Re-checking authority at approval and capture time | Built, tested |
 | Hash-chained audit log | Built, tested |
 | Fulfilment diff, AI-proposed remedy, merchant-approved refund | Built, tested |
-| PayPal client: Orders v2, Payments v2 refund, webhook verification | Built; request shapes unit-tested against a stub. **Not yet run against the live PayPal sandbox.** |
-| Claude provider (mandate compile, intent judge, injection scan, remedy) | Built; parsing and failure handling tested with a stand-in client. **Not yet run against the live API.** |
+| PayPal client: Orders v2 create and capture, Payments v2 refund | Built, tested, and **verified end to end against the live PayPal sandbox** (order created, buyer-approved, captured, partially refunded) |
+| PayPal webhook verification | Built; unit-tested against a stub. **Not yet verified with live sandbox webhooks.** |
+| LLM provider (mandate compile, intent judge, injection scan, remedy): Claude, or any OpenAI-compatible API such as Gemini's free tier | Built; parsing and failure handling tested with stand-in clients. **Not yet run against a live model.** |
 | Adversarial Commerce Lab (9 attack scenarios) | Built, passing (against the offline PayPal fake and offline AI fallback) |
 | Dashboard (AG Grid), MCP front door, demo storefront, hosted deployment, demo video | **Not built yet** (see Roadmap) |
 
@@ -54,10 +55,12 @@ With no credentials set, Paywarden runs in **fake mode**: an offline stand-in fo
 ### Using the PayPal sandbox and Claude
 
 1. Create a **sandbox** app at [developer.paypal.com](https://developer.paypal.com) (Apps & Credentials) and note the Client ID and Secret. Use the sandbox *buyer* account to approve checkouts.
-2. Add Codespaces secrets (or copy `.env.example` to `.env`): `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, `AGENT_API_TOKEN`, `OWNER_API_TOKEN`.
+2. Add Codespaces secrets (or copy `.env.example` to `.env`): `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, `AGENT_API_TOKEN`, `OWNER_API_TOKEN`, and an AI key: either `AI_API_KEY` (free Google Gemini key from [AI Studio](https://aistudio.google.com/apikey), used through Gemini's OpenAI-compatible endpoint) or `ANTHROPIC_API_KEY` (Claude, paid).
 3. In the Ports tab set port 3000 to **Public**, then set `PUBLIC_BASE_URL` to the forwarded address.
-4. In the PayPal dashboard add a webhook at `PUBLIC_BASE_URL/webhooks/paypal` for `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED` and `PAYMENT.CAPTURE.REFUNDED`, and set `PAYPAL_WEBHOOK_ID`.
-5. `npm start`. The banner should say `PayPal : SANDBOX`. Run `npm run demo`; it prints a real checkout URL, you approve it as the sandbox buyer, press Enter, and it captures.
+4. Optional: in the PayPal dashboard add a webhook at `PUBLIC_BASE_URL/webhooks/paypal` for `CHECKOUT.ORDER.APPROVED`, `PAYMENT.CAPTURE.COMPLETED` and `PAYMENT.CAPTURE.REFUNDED`, and set `PAYPAL_WEBHOOK_ID`. PayPal rejects `*.app.github.dev` addresses, so register webhooks against a hosted deployment instead. The demo works without them.
+5. `npm start`. The banner should say `PayPal : SANDBOX`. Run `npm run demo`; it prints a real checkout URL, you approve it as the sandbox **Personal** (buyer) account, press Enter, and it captures.
+
+Sandbox tip: use **US** sandbox accounts for both the seller (the Business account your app is linked to) and the buyer (a Personal account). Accounts created with country IN can hit India-specific PayPal restrictions, and logging in to checkout with the seller account fails ("you are logging in to the account of the seller").
 
 The server refuses to start against a non-sandbox PayPal URL unless `ALLOW_LIVE=1` is set.
 
@@ -120,7 +123,7 @@ Two credentials, on purpose. An agent can *ask* to pay; only the owner can appro
 
 **PayPal technologies used:** Orders v2 (create, capture), Payments v2 (refund), webhooks with signature verification, `PayPal-Request-Id` idempotency, sandbox environment.
 
-**AI used and how:** Claude (Anthropic API, model set by `ANTHROPIC_MODEL`) for four jobs: compiling a person's plain-English spending rules into a structured mandate, judging whether a basket matches the stated task, detecting instructions aimed at an agent inside untrusted content, and proposing remedies for a wrong order. Every model output is validated against a schema before use. None of these can authorize or move money.
+**AI used and how:** a large language model, either Google Gemini (free tier, via its OpenAI-compatible API, `AI_MODEL`) or Claude (Anthropic API, `ANTHROPIC_MODEL`), for four jobs: compiling a person's plain-English spending rules into a structured mandate, judging whether a basket matches the stated task, detecting instructions aimed at an agent inside untrusted content, and proposing remedies for a wrong order. Every model output is validated against a schema before use. None of these can authorize or move money.
 
 **Original work during the submission period:** this repository was created for the hackathon.
 

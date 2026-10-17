@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { AnthropicProvider, type MessagesClient } from '../src/ai/anthropic.js';
+import { openAiCompatibleClient } from '../src/ai/openai-compatible.js';
+import { createAIProvider } from '../src/ai/index.js';
 import { HeuristicProvider } from '../src/ai/heuristic.js';
 import { heuristicInjectionScan } from '../src/ai/injection.js';
 import type { PaymentProposal } from '../src/domain/schemas.js';
+import { claim, makeEnv, proposal } from './helpers.js';
 
 const basket = (names: string[]): PaymentProposal => ({
   idempotencyKey: 'key-12345678',
@@ -162,5 +165,94 @@ describe('AnthropicProvider (with a stand-in client; no network, no real model)'
     expect(r).toMatchObject({ action: 'partial_refund', refundAmountMinor: 900 });
     const { ai: ai2 } = make(['{"action":"wire_money_to_agent","rationale":"x"}']);
     await expect(ai2.proposeRemedy({ diffs: [], remainingRefundableMinor: 5000, policyText: 'p' })).rejects.toThrow();
+  });
+});
+
+describe('openAiCompatibleClient (stubbed fetch; no network)', () => {
+  const okReply = (content: string) =>
+    new Response(JSON.stringify({ choices: [{ message: { content } }] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+
+  it('sends a chat-completions request with the system prompt first and a bearer key', async () => {
+    const seen: { url: string; init: RequestInit }[] = [];
+    const fetchImpl = (async (url: string, init: RequestInit) => {
+      seen.push({ url, init });
+      return okReply('{"ok":true}');
+    }) as unknown as typeof fetch;
+    const client = openAiCompatibleClient({ baseUrl: 'https://example.test/v1/', apiKey: 'k-123', fetchImpl });
+    const res = await client.messages.create({ model: 'm', max_tokens: 100, system: 'SYS', messages: [{ role: 'user', content: 'U' }] });
+    expect(res.content[0]).toEqual({ type: 'text', text: '{"ok":true}' });
+    expect(seen[0]!.url).toBe('https://example.test/v1/chat/completions');
+    expect((seen[0]!.init.headers as Record<string, string>)['Authorization']).toBe('Bearer k-123');
+    const body = JSON.parse(String(seen[0]!.init.body));
+    expect(body.model).toBe('m');
+    expect(body.messages).toEqual([{ role: 'system', content: 'SYS' }, { role: 'user', content: 'U' }]);
+    expect(body.max_tokens).toBeGreaterThanOrEqual(4096);
+  });
+
+  it('throws on HTTP errors and empty replies (which the gateway turns into "ask a human")', async () => {
+    const errFetch = (async () => new Response(JSON.stringify([{ error: { message: 'quota exceeded' } }]), { status: 429 })) as unknown as typeof fetch;
+    const c1 = openAiCompatibleClient({ baseUrl: 'https://x.test', apiKey: 'k', fetchImpl: errFetch });
+    await expect(c1.messages.create({ model: 'm', max_tokens: 10, system: 's', messages: [{ role: 'user', content: 'u' }] })).rejects.toThrow(/429.*quota exceeded/);
+    const emptyFetch = (async () => okReply('')) as unknown as typeof fetch;
+    const c2 = openAiCompatibleClient({ baseUrl: 'https://x.test', apiKey: 'k', fetchImpl: emptyFetch });
+    await expect(c2.messages.create({ model: 'm', max_tokens: 10, system: 's', messages: [{ role: 'user', content: 'u' }] })).rejects.toThrow(/empty/);
+  });
+
+  it('plugs into the LLM provider: a fenced JSON reply is parsed and validated', async () => {
+    const fetchImpl = (async () =>
+      okReply('```json\n{"aligned": true, "confidence": 0.9, "reason": "charger and cable fit the task"}\n```')) as unknown as typeof fetch;
+    const client = openAiCompatibleClient({ baseUrl: 'https://x.test', apiKey: 'k', fetchImpl });
+    const ai = new AnthropicProvider({ apiKey: 'k', model: 'gemini-test', client, label: 'gemini' });
+    expect(ai.name).toBe('gemini:gemini-test');
+    const env = await makeEnv();
+    const judged = await ai.judgeIntent({ task: 'buy a charger', proposal: proposal(env, { items: [claim(env, 'charger-65w-uk')] }) });
+    expect(judged).toEqual({ aligned: true, confidence: 0.9, reason: 'charger and cable fit the task' });
+  });
+});
+
+describe('createAIProvider selection', () => {
+  const base = { anthropic: { model: 'claude-x' }, openai: { baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'gemini-y' } };
+  it('prefers Claude, then an OpenAI-compatible key, then the offline fallback', () => {
+    expect(createAIProvider({ ...base, anthropic: { apiKey: 'a', model: 'claude-x' }, openai: { ...base.openai, apiKey: 'o' } }).name).toBe('anthropic:claude-x');
+    expect(createAIProvider({ ...base, openai: { ...base.openai, apiKey: 'o' } }).name).toBe('gemini:gemini-y');
+    expect(createAIProvider(base).name).toBe('heuristic-offline');
+  });
+});
+
+describe('openAiCompatibleClient model fallbacks', () => {
+  const args = { model: 'busy-model', max_tokens: 10, system: 's', messages: [{ role: 'user' as const, content: 'u' }] };
+  const reply = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+
+  it('moves past busy, missing, slow and empty models to one that answers', async () => {
+    const tried: string[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const model = JSON.parse(String(init.body)).model as string;
+      tried.push(model);
+      if (model === 'busy-model') return reply(503, [{ error: { message: 'high demand' } }]);
+      if (model === 'gone-model') return reply(404, { error: { message: 'not found' } });
+      if (model === 'slow-model') throw new DOMException('timed out', 'TimeoutError');
+      if (model === 'empty-model') return reply(200, { choices: [{ message: { content: '' } }] });
+      return reply(200, { choices: [{ message: { content: '{"ok":true}' } }] });
+    }) as unknown as typeof fetch;
+    const client = openAiCompatibleClient({ baseUrl: 'https://x.test', apiKey: 'k', fetchImpl, fallbackModels: ['gone-model', 'slow-model', 'empty-model', 'good-model'] });
+    const res = await client.messages.create(args);
+    expect(res.content[0]!.text).toBe('{"ok":true}');
+    expect(tried).toEqual(['busy-model', 'gone-model', 'slow-model', 'empty-model', 'good-model']);
+  });
+
+  it('stops at once on a bad key, and reports every failure when all models fail', async () => {
+    let calls = 0;
+    const badKey = (async () => { calls++; return reply(401, { error: { message: 'API key not valid' } }); }) as unknown as typeof fetch;
+    const c1 = openAiCompatibleClient({ baseUrl: 'https://x.test', apiKey: 'k', fetchImpl: badKey, fallbackModels: ['other'] });
+    await expect(c1.messages.create(args)).rejects.toThrow(/401 API key not valid/);
+    expect(calls).toBe(1);
+    const allBusy = (async () => reply(503, { error: { message: 'high demand' } })) as unknown as typeof fetch;
+    const c2 = openAiCompatibleClient({ baseUrl: 'https://x.test', apiKey: 'k', fetchImpl: allBusy, fallbackModels: ['other'] });
+    await expect(c2.messages.create(args)).rejects.toThrow(/every model failed.*busy-model: HTTP 503.*other: HTTP 503/);
+  });
+
+  it('reads a comma-separated AI_MODEL as primary plus fallbacks', () => {
+    const ai = createAIProvider({ anthropic: { model: 'c' }, openai: { apiKey: 'o', baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai', model: 'a, b ,c2' } });
+    expect(ai.name).toBe('gemini:a (fallbacks: b, c2)');
   });
 });
