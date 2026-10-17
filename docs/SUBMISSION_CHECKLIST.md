@@ -38,8 +38,8 @@ Source: the hackathon page and Official Rules.
 
 Judging criteria (equally weighted): Technological Implementation, Design, Potential Impact, Innovation, Presentation.
 
-- [ ] Run the full flow against the **live PayPal sandbox** and the **live Claude API** (the biggest outstanding risk: neither has been exercised yet)
-- [ ] Build the owner dashboard (AG Grid) for a complete product feel and a shot at the AG Grid prize
+- [x] Run the full flow against the **live PayPal sandbox** with a **live AI model** (done with Gemini's free tier)
+- [x] Build the owner console (AG Grid) at `/dashboard`, and a home page at `/`
 - [ ] Deploy to Render for a hosted demo URL (and a shot at the Render prize)
 - [ ] Rehearse the 3-minute video with the beats: risk, mandate, legitimate payment, attack blocked, wrong delivery, merchant-approved refund, audit trail
 

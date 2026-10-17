@@ -1,4 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
+import { createRequire } from 'node:module';
+import { join, sep } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express, { type NextFunction, type Request, type RequestHandler, type Response } from 'express';
 import { ZodError, z } from 'zod';
 import { PaymentProposalSchema, RemedyProposalSchema } from './domain/schemas.js';
@@ -38,6 +41,33 @@ const requireToken =
 
 const param = (req: Request, name: string): string => String(req.params[name] ?? '');
 
+const PUBLIC_DIR = fileURLToPath(new URL('../public', import.meta.url));
+// The package's "exports" hide its browser bundle from Node's resolver, so find the package folder instead.
+const AG_GRID_ENTRY = createRequire(import.meta.url).resolve('ag-grid-community');
+const AG_GRID_JS = join(AG_GRID_ENTRY.slice(0, AG_GRID_ENTRY.lastIndexOf(`${sep}ag-grid-community${sep}`) + `${sep}ag-grid-community`.length), 'dist', 'ag-grid-community.min.js');
+
+/** Locked-down headers for the HTML pages: our own scripts only, no framing, no inline script. */
+const pageHeaders: RequestHandler = (_req, res, next) => {
+  res.setHeader(
+    'Content-Security-Policy',
+    [
+      "default-src 'self'",
+      "script-src 'self'",
+      // AG Grid's theming injects <style> elements at runtime.
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+      'font-src https://fonts.gstatic.com data:',
+      "img-src 'self' data:",
+      "connect-src 'self'",
+      "frame-ancestors 'none'",
+      "base-uri 'none'",
+      "form-action 'self'",
+    ].join('; '),
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  next();
+};
+
 export interface AppOptions {
   /**
    * Only passed when running against the offline PayPal fake. Enables a dev-only
@@ -57,6 +87,15 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
     if (safeEqual(t, auth.agentToken) || safeEqual(t, auth.ownerToken)) return next();
     res.status(401).json({ error: 'UNAUTHORIZED', message: 'A valid token is required.' });
   };
+
+  // ── Pages: a public home page and the owner dashboard (its data needs the owner token) ──
+  app.get('/', pageHeaders, (_req, res) => res.sendFile('index.html', { root: PUBLIC_DIR }));
+  app.get('/dashboard', pageHeaders, (_req, res) => res.sendFile('dashboard.html', { root: PUBLIC_DIR }));
+  app.get('/assets/ag-grid.js', (_req, res) => {
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.sendFile(AG_GRID_JS);
+  });
+  app.use('/assets', pageHeaders, express.static(`${PUBLIC_DIR}/assets`, { index: false, maxAge: '5m' }));
 
   app.get('/health', (_req, res) => {
     // Reports the mode so nobody mistakes the offline fake for real PayPal sandbox traffic.
@@ -152,6 +191,11 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
 
   app.get('/v1/state', owner, (_req, res) => {
     res.json(gateway.state());
+  });
+
+  app.get('/v1/dashboard', owner, (_req, res) => {
+    res.setHeader('Cache-Control', 'no-store');
+    res.json({ ...gateway.dashboard(), paypal: opts.fake ? 'fake' : 'sandbox' });
   });
 
   app.get('/v1/audit', owner, (_req, res) => {

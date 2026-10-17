@@ -27,9 +27,10 @@ Built for the *Build What's Next with PayPal and AI* hackathon.
 | Fulfilment diff, AI-proposed remedy, merchant-approved refund | Built, tested |
 | PayPal client: Orders v2 create and capture, Payments v2 refund | Built, tested, and **verified end to end against the live PayPal sandbox** (order created, buyer-approved, captured, partially refunded) |
 | PayPal webhook verification | Built; unit-tested against a stub. **Not yet verified with live sandbox webhooks.** |
-| LLM provider (mandate compile, intent judge, injection scan, remedy): Claude, or any OpenAI-compatible API such as Gemini's free tier | Built; parsing and failure handling tested with stand-in clients. **Not yet run against a live model.** |
+| LLM provider (mandate compile, intent judge, injection scan, remedy): Claude, or any OpenAI-compatible API such as Gemini's free tier, with automatic model fallbacks | Built, tested, and **verified live with Google Gemini** during the end-to-end PayPal sandbox run. Claude path tested with a stand-in client only. |
+| Owner console (`/dashboard`, AG Grid) and home page (`/`) | Built; access rules tested; checked in a real browser at desktop and phone widths, light and dark |
 | Adversarial Commerce Lab (9 attack scenarios) | Built, passing (against the offline PayPal fake and offline AI fallback) |
-| Dashboard (AG Grid), MCP front door, demo storefront, hosted deployment, demo video | **Not built yet** (see Roadmap) |
+| MCP front door, merchant-side verifier, hosted deployment, demo video | **Not built yet** (see Roadmap) |
 
 Run `npm test` and `npm run lab` to see the first rows for yourself. The first thing to do with real credentials is the sandbox walkthrough below.
 
@@ -49,6 +50,7 @@ Run `npm test` and `npm run lab` to see the first rows for yourself. The first t
    npm start           # terminal 1
    npm run demo        # terminal 2
    ```
+4. See it as the owner: run `npm run simulate` in terminal 2, then open the forwarded port 3000 in the browser and go to **/dashboard**. Sign in with your `OWNER_API_TOKEN`. The simulation leaves a $58 payment and a wrong delivery waiting for your decision.
 
 With no credentials set, Paywarden runs in **fake mode**: an offline stand-in for PayPal and a rule-based AI fallback. The server banner and `GET /health` say so plainly, and nothing reaches PayPal. That is enough for anyone to run the whole flow. To use the real PayPal sandbox and Claude, add credentials as below.
 
@@ -107,6 +109,18 @@ Full detail, trust boundaries and the invariants the tests enforce: [docs/ARCHIT
 | LAB-08 | Stored mandate limit edited after signing | Signature fails verification |
 | LAB-09 | Agent drains the budget, then reuses a spent quote | Rolling limit; single-use quotes |
 
+### The owner console
+
+`/dashboard` is where the person who delegated spending sees and controls it:
+
+- **Spending permit:** the signed mandate, its rules written out by code, and a meter of what has been spent against the rolling limit.
+- **Needs your decision:** payments above the approval threshold and deliveries that arrived wrong, with the AI's proposed remedy. Approving re-checks the permit first.
+- **Every payment request:** each allow, ask or refuse decision with its reason codes, in an AG Grid table. Select a row to see each reason in plain language and whether a policy rule, the merchant catalogue or the AI check raised it.
+- **Records:** PayPal orders (with a link to the sandbox checkout and a capture button) and the hash-chained audit log.
+- **The breaker:** one switch that freezes every agent payment and capture.
+
+The console page is public, but its data endpoint (`GET /v1/dashboard`) needs the owner token, and the agent token is refused. The token stays in the browser tab's session storage. Pages are served with a strict Content Security Policy (no inline scripts, no framing), and server data is inserted as text, never HTML, because reasons can quote attacker-written page text.
+
 ### API at a glance
 
 Two credentials, on purpose. An agent can *ask* to pay; only the owner can approve, refund, revoke or freeze, so an agent that has been talked into something cannot approve its own request.
@@ -114,7 +128,7 @@ Two credentials, on purpose. An agent can *ask* to pay; only the owner can appro
 | Who | Endpoint |
 |---|---|
 | Agent | `POST /v1/payments/authorize`, `POST /v1/orders/:id/capture`, `GET /v1/orders/:id` |
-| Owner | `POST /v1/mandates/compile`, `POST /v1/mandates`, `POST /v1/quotes`, `POST /v1/approvals/:id/resolve`, `POST /v1/kill`, `POST /v1/resume`, `POST /v1/mandates/:id/revoke`, `POST /v1/orders/:id/fulfillment`, `POST /v1/exceptions/:id/approve`, `POST /v1/refunds`, `GET /v1/state`, `GET /v1/audit`, `GET /v1/audit/verify` |
+| Owner | `GET /v1/dashboard`, `POST /v1/mandates/compile`, `POST /v1/mandates`, `POST /v1/quotes`, `POST /v1/approvals/:id/resolve`, `POST /v1/kill`, `POST /v1/resume`, `POST /v1/mandates/:id/revoke`, `POST /v1/orders/:id/fulfillment`, `POST /v1/exceptions/:id/approve`, `POST /v1/refunds`, `GET /v1/state`, `GET /v1/audit`, `GET /v1/audit/verify` |
 | PayPal | `POST /webhooks/paypal` (signature verified against the raw body) |
 
 ---
@@ -122,6 +136,8 @@ Two credentials, on purpose. An agent can *ask* to pay; only the owner can appro
 ## Hackathon notes
 
 **PayPal technologies used:** Orders v2 (create, capture), Payments v2 (refund), webhooks with signature verification, `PayPal-Request-Id` idempotency, sandbox environment.
+
+**Sponsor tools used:** AG Grid Community (MIT) for the owner console's request history, orders and audit tables.
 
 **AI used and how:** a large language model, either Google Gemini (free tier, via its OpenAI-compatible API, `AI_MODEL`) or Claude (Anthropic API, `ANTHROPIC_MODEL`), for four jobs: compiling a person's plain-English spending rules into a structured mandate, judging whether a basket matches the stated task, detecting instructions aimed at an agent inside untrusted content, and proposing remedies for a wrong order. Every model output is validated against a schema before use. None of these can authorize or move money.
 
@@ -141,11 +157,10 @@ Two credentials, on purpose. An agent can *ask* to pay; only the owner can appro
 
 ## Roadmap
 
-1. Verify the full flow against the live PayPal sandbox and the live Claude API.
-2. Owner dashboard with AG Grid (spend, approvals queue, audit explorer, kill switch).
-3. MCP front door so any MCP-capable agent can use the gateway as a PayPal-facing tool.
-4. Merchant-side verifier: a checkout that only accepts agent purchases carrying a valid signed mandate.
-5. Hosted deployment and database-backed store.
+1. Verify webhooks against a hosted deployment, and the Claude path against the live API.
+2. MCP front door so any MCP-capable agent can use the gateway as a PayPal-facing tool.
+3. Merchant-side verifier: a checkout that only accepts agent purchases carrying a valid signed mandate.
+4. Hosted deployment (and PayPal webhooks against it) and a database-backed store.
 
 ## License
 

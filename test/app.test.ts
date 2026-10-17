@@ -185,3 +185,58 @@ describe('webhook endpoint', () => {
     expect(ok.json).toEqual({ handled: true });
   });
 });
+
+describe('owner console and pages', () => {
+  it('serves the home page and console shell publicly, with a strict content security policy', async () => {
+    for (const path of ['/', '/dashboard']) {
+      const res = await fetch(`${base}${path}`);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('content-type')).toMatch(/text\/html/);
+      const csp = res.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("script-src 'self'");
+      expect(csp).toContain("frame-ancestors 'none'");
+      expect(csp).not.toMatch(/script-src[^;]*unsafe-inline/);
+    }
+    const grid = await fetch(`${base}/assets/ag-grid.js`);
+    expect(grid.status).toBe(200);
+    expect((await grid.text()).length).toBeGreaterThan(100_000);
+    expect((await fetch(`${base}/assets/dashboard.js`)).status).toBe(200);
+  });
+
+  it('gives console data only to the owner, never to the agent', async () => {
+    expect((await call('GET', '/v1/dashboard')).status).toBe(401);
+    expect((await call('GET', '/v1/dashboard', AGENT)).status).toBe(401);
+    const res = await call('GET', '/v1/dashboard', OWNER);
+    expect(res.status).toBe(200);
+    expect(res.json.paypal).toBe('sandbox');
+    expect(res.json.mandates[0]).toMatchObject({ status: 'active', signatureValid: true });
+    expect(res.json.mandates[0].summary[0]).toContain('USD 60.00');
+    expect(res.json.audit.ok).toBe(true);
+  });
+
+  it('lists every decision with its reasons, including early refusals such as a tampered permit', async () => {
+    const e = await makeEnv();
+    const app = createApp(e.gateway, { agentToken: AGENT, ownerToken: OWNER }).listen(0);
+    await once(app, 'listening');
+    const url = `http://127.0.0.1:${(app.address() as AddressInfo).port}`;
+    try {
+      const q = e.gateway.approveQuote({ mandateId: e.mandateId, merchantId: MERCHANT, items: [{ sku: 'charger-65w-uk', quantity: 1 }], maxTotalMinor: 5000, approvedBy: 'owner' });
+      const pay = (key: string, items: ReturnType<typeof claim>[]) =>
+        e.gateway.authorize({ idempotencyKey: key, mandateId: e.mandateId, agentId: 'test-agent', merchantId: MERCHANT, items, shippingMinor: 600, taxMinor: 0, currency: 'USD', description: 'x', quoteId: q.id });
+      await pay('k-ok', [claim(e, 'charger-65w-uk')]);
+      await pay('k-gift', [claim(e, 'charger-65w-uk'), claim(e, 'giftcard-200')]);
+      e.store.mandates.get(e.mandateId)!.body.perPurchaseLimitMinor = 999_999; // tamper after signing
+      await pay('k-tampered', [claim(e, 'charger-65w-uk')]);
+      const res = await fetch(`${url}/v1/dashboard`, { headers: { authorization: `Bearer ${OWNER}` } });
+      const d = (await res.json()) as any;
+      expect(d.decisions.map((x: any) => x.verdict)).toEqual(['deny', 'deny', 'allow']);
+      expect(d.decisions[0].reasons.map((r: any) => r.code)).toContain('MANDATE_INVALID_SIGNATURE');
+      expect(d.decisions[0]).toMatchObject({ mandateId: e.mandateId, merchantId: MERCHANT });
+      expect(d.decisions[1].reasons.map((r: any) => r.code)).toContain('CATEGORY_DENIED');
+      expect(d.counts).toMatchObject({ allowed: 1, denied: 2 });
+      expect(d.mandates[0]).toMatchObject({ status: 'invalid', signatureValid: false, spentInPeriodMinor: 4000 });
+    } finally {
+      app.close();
+    }
+  });
+});

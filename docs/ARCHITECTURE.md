@@ -22,6 +22,8 @@ An AI agent should be able to *ask* to spend money, but should never be the thin
 | `src/store/store.ts` | In-memory state (swap for a database) |
 | `src/app.ts`, `src/server.ts` | Express API with separate agent and owner credentials |
 | `src/lab/` | Adversarial Commerce Lab scenarios |
+| `public/` | Home page and owner console (plain HTML, CSS and JS; AG Grid served from the app) |
+| `scripts/` | `demo.ts` (end-to-end walkthrough) and `simulate.ts` (leaves work waiting in the console) |
 
 ## Authorization pipeline
 

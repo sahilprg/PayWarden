@@ -328,7 +328,13 @@ export class Gateway {
       'PAYMENT_DENIED',
       reasonsAlreadyLogged
         ? { idempotencyKey: proposal.idempotencyKey, codes: decision.reasons.map((r) => r.code) }
-        : { idempotencyKey: proposal.idempotencyKey, reasons: decision.reasons },
+        : {
+            idempotencyKey: proposal.idempotencyKey,
+            mandateId: proposal.mandateId,
+            merchantId: proposal.merchantId,
+            totalMinor: decision.totalMinor,
+            reasons: decision.reasons,
+          },
     );
     const result: AuthorizationResult = { status: 'denied', decision };
     this.d.store.decisions.set(proposal.idempotencyKey, { proposalHash: hash, result });
@@ -692,6 +698,90 @@ export class Gateway {
 
   auditEntries() {
     return this.d.audit.entries();
+  }
+
+  /**
+   * Everything the owner dashboard shows, in one read. Derived from the store and
+   * the audit log; it changes nothing.
+   */
+  dashboard() {
+    const s = this.d.store;
+    const now = this.d.now();
+    const mandates = [...s.mandates.values()].map((m) => {
+      const b = m.body;
+      const msLeft = Date.parse(b.expiresAt) - now.getTime();
+      const revoked = s.revoked.has(b.id);
+      const signatureValid = this.d.signer.verify(m);
+      const status = !signatureValid ? 'invalid' : revoked ? 'revoked' : msLeft <= 0 ? 'expired' : 'active';
+      const lines = summarizeMandate({ ...b, expiresInHours: Math.max(1, Math.ceil(msLeft / 3_600_000)) });
+      const when = new Date(b.expiresAt).toLocaleString('en-GB', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      lines[lines.length - 1] = msLeft > 0 ? `Expires ${when} UTC.` : `Expired ${when} UTC.`;
+      return {
+        id: b.id,
+        subject: b.subject,
+        agentId: b.agentId,
+        task: b.task,
+        currency: b.currency,
+        perPurchaseLimitMinor: b.perPurchaseLimitMinor,
+        periodLimitMinor: b.periodLimitMinor,
+        periodDays: b.periodDays,
+        spentInPeriodMinor: s.spentInWindow(b.id, now, b.periodDays),
+        expiresAt: b.expiresAt,
+        createdAt: b.createdAt,
+        keyId: m.keyId,
+        signatureValid,
+        revoked,
+        status,
+        summary: lines,
+      };
+    });
+
+    type Reason = { code: string; message: string; source: string };
+    const decisions: {
+      seq: number; ts: string; verdict: string; mandateId?: string; merchantId?: string; totalMinor?: number; reasons: Reason[];
+    }[] = [];
+    for (const e of this.d.audit.entries()) {
+      const d = e.data as Record<string, unknown>;
+      if (e.type === 'AUTHORIZATION_DECISION' || (e.type === 'PAYMENT_DENIED' && Array.isArray(d['reasons']))) {
+        decisions.push({
+          seq: e.seq,
+          ts: e.ts,
+          verdict: e.type === 'PAYMENT_DENIED' ? 'deny' : String(d['verdict']),
+          mandateId: d['mandateId'] as string | undefined,
+          merchantId: d['merchantId'] as string | undefined,
+          totalMinor: d['totalMinor'] as number | undefined,
+          reasons: (d['reasons'] as Reason[]) ?? [],
+        });
+      }
+    }
+    decisions.reverse();
+
+    const orders = [...s.orders.values()].reverse();
+    const exceptions = [...s.exceptions.values()].reverse();
+    const approvals = [...s.approvals.values()].reverse();
+    const entries = this.d.audit.entries();
+    return {
+      killSwitch: s.killSwitch,
+      aiProvider: this.d.ai.name,
+      mandates,
+      counts: {
+        allowed: decisions.filter((d) => d.verdict === 'allow').length,
+        needsApproval: decisions.filter((d) => d.verdict === 'needs_approval').length,
+        denied: decisions.filter((d) => d.verdict === 'deny').length,
+        capturedMinor: orders.reduce((sum, o) => sum + (o.capturedMinor ?? 0), 0),
+        refundedMinor: orders.reduce((sum, o) => sum + o.refundedMinor, 0),
+      },
+      decisions: decisions.slice(0, 500),
+      pendingApprovals: approvals.filter((a) => a.status === 'pending'),
+      openExceptions: exceptions.filter((x) => x.status === 'open'),
+      exceptions,
+      orders,
+      audit: {
+        ...this.d.audit.verify(),
+        head: this.d.audit.head(),
+        recent: entries.slice(-300).reverse(),
+      },
+    };
   }
 
   state() {
