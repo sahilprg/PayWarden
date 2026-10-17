@@ -27,7 +27,7 @@
 
   const money = (minor, currency = 'USD') =>
     minor === undefined || minor === null ? '' : new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
-  const time = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '');
+  const time = (iso) => (iso ? new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }) : '');
   const short = (id, n = 8) => (id ? String(id).slice(0, n) : '');
 
   const VERDICT = {
@@ -133,10 +133,10 @@
     getRowId: (p) => String(p.data.seq),
     rowSelection: { mode: 'singleRow', checkboxes: false, enableClickSelection: true },
     columnDefs: [
-      { field: 'ts', headerName: 'When', valueFormatter: (p) => time(p.value), sort: 'desc', minWidth: 150, flex: 1 },
-      { field: 'verdict', headerName: 'Outcome', cellRenderer: (p) => verdictMark(p.value), minWidth: 140, flex: 1 },
-      { field: 'merchantId', headerName: 'Merchant', minWidth: 150, flex: 1 },
-      { field: 'totalMinor', headerName: 'Amount', valueFormatter: (p) => money(p.value), type: 'rightAligned', minWidth: 110, flex: 0.8 },
+      { field: 'ts', headerName: 'When', valueFormatter: (p) => time(p.value), sort: 'desc', minWidth: 150, maxWidth: 170 },
+      { field: 'verdict', headerName: 'Outcome', cellRenderer: (p) => verdictMark(p.value), minWidth: 130, maxWidth: 150 },
+      { field: 'merchantId', headerName: 'Merchant', minWidth: 170, maxWidth: 200 },
+      { field: 'totalMinor', headerName: 'Amount', valueFormatter: (p) => money(p.value), type: 'rightAligned', minWidth: 100, maxWidth: 120 },
       { field: 'reasons', headerName: 'Reasons', cellRenderer: reasonChips, flex: 3, minWidth: 260, sortable: false,
         valueFormatter: (p) => (p.value || []).map((r) => r.code).join(', ') },
     ],
@@ -166,15 +166,15 @@
     ...baseGrid,
     getRowId: (p) => p.data.id,
     columnDefs: [
-      { field: 'createdAt', headerName: 'Created', valueFormatter: (p) => time(p.value), sort: 'desc', minWidth: 150, flex: 1 },
-      { field: 'paypalOrderId', headerName: 'PayPal order', minWidth: 170, flex: 1, cellClass: 'mono' },
-      { field: 'merchantId', headerName: 'Merchant', minWidth: 150, flex: 1 },
-      { headerName: 'Items', valueGetter: (p) => p.data.proposal.items.map((i) => `${i.quantity}× ${i.name}`).join(', '), flex: 2, minWidth: 220 },
-      { field: 'totalMinor', headerName: 'Total', valueFormatter: (p) => money(p.value, p.data.currency), type: 'rightAligned', minWidth: 100, flex: 0.7 },
-      { field: 'status', headerName: 'Status', minWidth: 160, flex: 1,
+      { field: 'createdAt', headerName: 'Created', valueFormatter: (p) => time(p.value), sort: 'desc', minWidth: 150, maxWidth: 170 },
+      { field: 'paypalOrderId', headerName: 'PayPal order', minWidth: 170, maxWidth: 190, cellClass: 'mono' },
+      { headerName: 'Items', valueGetter: (p) => p.data.proposal.items.map((i) => `${i.quantity}× ${i.name}`).join(', '), flex: 1, minWidth: 200,
+        tooltipValueGetter: (p) => p.data.proposal.items.map((i) => `${i.quantity}× ${i.name}`).join(', ') },
+      { field: 'totalMinor', headerName: 'Total', valueFormatter: (p) => money(p.value, p.data.currency), type: 'rightAligned', minWidth: 90, maxWidth: 110 },
+      { field: 'status', headerName: 'Status', minWidth: 160, maxWidth: 180,
         cellRenderer: (p) => { const s = ORDER_STATUS[p.value] || ['status-neutral', '•', p.value]; return statusMark(s[0], s[2], s[1]); } },
-      { field: 'refundedMinor', headerName: 'Refunded', valueFormatter: (p) => (p.value ? money(p.value, p.data.currency) : ''), type: 'rightAligned', minWidth: 100, flex: 0.7 },
-      { headerName: 'Next step', minWidth: 230, flex: 1.2, sortable: false, cellRenderer: (p) => {
+      { field: 'refundedMinor', headerName: 'Refunded', valueFormatter: (p) => (p.value ? money(p.value, p.data.currency) : ''), type: 'rightAligned', minWidth: 90, maxWidth: 110 },
+      { headerName: 'Next step', minWidth: 200, maxWidth: 230, sortable: false, cellRenderer: (p) => {
           const o = p.data;
           if (o.status !== 'created' && o.status !== 'approved') return '';
           const wrap = el('span', { style: 'display:inline-flex;gap:8px;align-items:center' });

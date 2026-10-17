@@ -19,7 +19,7 @@ const OWNER = process.env['OWNER_API_TOKEN'] ?? 'dev-owner-token';
 const AGENT = process.env['AGENT_API_TOKEN'] ?? 'dev-agent-token';
 const MERCHANT = 'fernlight-electronics';
 const INSTRUCTION =
-  'Buy a 65W USB-C charger with a UK plug for my trip. Max $60 per purchase, $200 per month. ' +
+  'Buy a 65W USB-C charger with a UK plug and a couple of USB-C cables for my trip. Max $60 per purchase, $200 per month. ' +
   'No gift cards. Only buy from Fernlight Electronics. Ask me for approval above $50. Expires in 3 days.';
 
 async function api(method: string, path: string, token: string | undefined, body?: unknown) {

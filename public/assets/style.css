@@ -133,7 +133,7 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
 .topbar-spacer { flex: 1; }
 
 /* ── The breaker: the one physical object on the page ── */
-.breaker { display: flex; align-items: center; gap: 14px; }
+.breaker { display: flex; align-items: center; gap: 14px; margin-left: auto; }
 .breaker-text { text-align: right; line-height: 1.25; }
 .breaker-state { font-weight: 700; }
 .breaker-hint { font-size: 12.5px; color: var(--muted); }
@@ -254,5 +254,8 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
 }
 
 /* AG Grid reserves 150px under auto-height grids for its empty overlay; a short table should stay short. */
+.grid-host .ag-grid-scrolling-rows.ag-layout-auto-height,
 .grid-host .ag-layout-auto-height .ag-center-cols-viewport,
 .grid-host .ag-layout-auto-height .ag-center-cols-container { min-height: 46px !important; }
+/* Scrollbars inside the grids follow the page theme instead of the OS default. */
+.grid-host * { scrollbar-color: var(--line-strong) transparent; }
