@@ -49,7 +49,8 @@ describe('private playgrounds', () => {
 
     const run = await call('POST', `${apiBase}/v1/scenario`, token, { name: 'Judge' });
     expect(run.status).toBe(200);
-    expect(run.json.log.length).toBeGreaterThanOrEqual(5);
+    expect(run.json.log.map((s: any) => s.tone)).toEqual(['info', 'allow', 'deny', 'deny', 'ask', 'ask']);
+    expect(run.json.log[2].codes).toEqual(expect.arrayContaining(['CATEGORY_DENIED', 'INJECTION_SUSPECTED']));
 
     const d = (await call('GET', `${apiBase}/v1/dashboard`, token)).json;
     expect(d.counts).toMatchObject({ allowed: 1, needsApproval: 1, denied: 2, capturedMinor: 4900 });
@@ -63,6 +64,14 @@ describe('private playgrounds', () => {
     expect((await call('POST', `${apiBase}/v1/orders/${approved.json.orderId}/capture`, token)).json.status).toBe('captured');
     const refund = await call('POST', `${apiBase}/v1/exceptions/${d.openExceptions[0].id}/approve`, token, { approvedBy: 'Judge' });
     expect(refund.status).toBe(200);
+
+    // A trial purchase goes through; once the agent is frozen, the same purchase is refused.
+    const ok = await call('POST', `${apiBase}/v1/scenario/attempt`, token, {});
+    expect(ok.json.step.tone).toBe('allow');
+    expect((await call('POST', `${apiBase}/v1/kill`, token, { by: 'Judge' })).status).toBe(200);
+    const frozen = await call('POST', `${apiBase}/v1/scenario/attempt`, token, {});
+    expect(frozen.json.step).toMatchObject({ tone: 'deny' });
+    expect(frozen.json.step.codes).toContain('KILL_SWITCH');
 
     // The real instance did not change.
     expect((await call('GET', '/v1/dashboard', OWNER)).json.decisions.length).toBe(before);

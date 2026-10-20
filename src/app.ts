@@ -11,7 +11,7 @@ import { toNodeHandler } from '@modelcontextprotocol/node';
 import { InProcessAgentApi } from './mcp/agent-api.js';
 import { createPaywardenMcpServer } from './mcp/server.js';
 import type { Playgrounds } from './playground.js';
-import { runScenario } from './scenario.js';
+import { agentAttempt, runScenario } from './scenario.js';
 import type { FakePayPal } from './paypal/fake.js';
 
 export interface AuthConfig {
@@ -83,6 +83,8 @@ export interface AppOptions {
   fake?: FakePayPal;
   /** Fake mode only: may this instance run the built-in scenario now? Returns a reason when not. */
   scenarioGate?: () => string | undefined;
+  /** Fake mode only: may the agent make one more trial purchase? Returns a reason when not. */
+  attemptGate?: () => string | undefined;
   /** Enables private visitor playgrounds at POST /v1/playground and /play/:pid/... */
   playgrounds?: Playgrounds;
   /** Behind a reverse proxy (Render): use X-Forwarded-For for the client IP. */
@@ -272,6 +274,15 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
       } finally {
         scenarioBusy = false;
       }
+    });
+    app.post('/v1/scenario/attempt', owner, async (req, res) => {
+      const blocked = opts.attemptGate?.();
+      if (blocked) {
+        res.status(429).json({ error: 'ATTEMPT_LIMIT', message: blocked });
+        return;
+      }
+      const { name } = z.object({ name: z.string().min(1).max(80).default('you') }).parse(req.body ?? {});
+      res.json({ step: await agentAttempt(gateway, fake, name) });
     });
     app.post('/dev/fake/payer-approve/:paypalOrderId', (req, res) => {
       fake.simulatePayerApproval(param(req, 'paypalOrderId'));

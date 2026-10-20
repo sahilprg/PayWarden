@@ -264,9 +264,33 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
 .gate-or { margin-top: 20px; padding-top: 18px; border-top: 1px dashed var(--line-strong); }
 .gate-or p { font-size: 14px; color: var(--ink-2); margin-bottom: 12px; }
 .gate-or strong { color: var(--ink); }
-.playbar { display: grid; grid-template-columns: 1fr auto; gap: 12px 20px; align-items: center; padding: 14px 18px; margin-bottom: 20px; border-color: var(--accent); }
-.playbar-text { font-size: 14px; color: var(--ink-2); }
+.playbar { padding: 16px 18px; margin-bottom: 20px; border-color: var(--accent); }
+.playbar-head { display: flex; gap: 12px 20px; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.playbar-text { font-size: 14px; color: var(--ink-2); flex: 1 1 420px; }
 .playbar-text strong { color: var(--ink); }
-.playbar-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
-.playbar-log { grid-column: 1 / -1; margin: 0; padding: 10px 0 0 22px; border-top: 1px solid var(--line); font-size: 14px; color: var(--ink-2); display: grid; gap: 4px; }
-@media (max-width: 760px) { .playbar { grid-template-columns: 1fr; } .playbar-actions { justify-content: flex-start; } }
+.playbar-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.playbar-progress { display: grid; gap: 8px; margin-top: 14px; font-size: 14px; color: var(--ink-2); }
+.playbar-progress-track { height: 6px; border-radius: 3px; background: var(--accent-soft); overflow: hidden; }
+.playbar-progress-bar { width: 35%; height: 100%; border-radius: 3px; background: var(--accent); animation: pw-progress 1.4s ease-in-out infinite; }
+@keyframes pw-progress { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+@media (prefers-reduced-motion: reduce) { .playbar-progress-bar { animation: none; width: 100%; opacity: 0.5; } }
+.playbar-body { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 18px 28px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.playbar-col h3 { font-size: 15px; margin-bottom: 10px; }
+.tour-count { font-weight: 500; color: var(--muted); font-size: 13.5px; margin-left: 6px; }
+.runlog { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; counter-reset: run; }
+.runlog li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; font-size: 14px; }
+.runlog li > .status { align-self: start; margin-top: 1px; }
+.tour-result { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.tour-result .code-chip { margin: 0; }
+.runlog .chips { margin-top: 4px; }
+.tour { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.tour li { display: grid; grid-template-columns: 22px 1fr; gap: 10px; font-size: 14px; }
+.tour-mark { width: 18px; height: 18px; margin-top: 1px; border-radius: 50%; border: 2px solid var(--line-strong); }
+.tour li.done .tour-mark { border: 0; background: var(--good); display: grid; place-items: center; color: #fff; font: 700 11px/1 var(--font); }
+.tour li.done .tour-title { color: var(--muted); }
+.tour-title { font-weight: 600; color: var(--ink); }
+.tour-hint { color: var(--muted); font-size: 13px; }
+.tour-action { margin-top: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.tour-action .btn { min-height: 32px; padding: 0 12px; font-size: 13px; }
+.tour-result { font-size: 13px; color: var(--ink-2); }
+@media (max-width: 900px) { .playbar-body { grid-template-columns: 1fr; } }

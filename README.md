@@ -136,7 +136,7 @@ Any MCP-capable agent can pay through Paywarden. The MCP server holds only the a
 
 ### The private playground
 
-`/dashboard?playground=1` gives each visitor a separate, throwaway Paywarden: its own gateway, permit, audit log and tokens, the server's AI, and the offline PayPal stand-in so nothing real moves. **Run the scenario** plays the agent through the standard story and leaves a payment above the approval line and a wrong delivery for the visitor to decide. Playgrounds expire after an hour without use, and creation and scenario runs are rate-limited to protect the AI quota. Set `PLAYGROUND=0` to turn them off.
+`/dashboard?playground=1` gives each visitor a separate, throwaway Paywarden: its own gateway, permit, audit log and tokens, the server's AI, and the offline PayPal stand-in so nothing real moves. **Run the scenario** plays the agent through the standard story and leaves a payment above the approval line and a wrong delivery for the visitor to decide. A **Things to try** checklist then ticks itself off as the visitor approves, captures, refunds, freezes the agent and watches a purchase get refused, and opens the audit log. Playgrounds expire after an hour without use, and creation and scenario runs are rate-limited to protect the AI quota. Set `PLAYGROUND=0` to turn them off.
 
 ### API at a glance
 

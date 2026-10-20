@@ -49,15 +49,30 @@
 
   <main class="page" id="console" hidden>
     <section class="panel playbar" id="playbar" hidden aria-label="Playground">
-      <div class="playbar-text">
-        <strong>Private playground.</strong> Your own copy of Paywarden: the real gateway, rules and AI, with PayPal simulated. It disappears after an hour without use.
+      <div class="playbar-head">
+        <div class="playbar-text">
+          <strong>Private playground.</strong> Your own copy of Paywarden: the real gateway, rules and AI, with PayPal simulated. It disappears after an hour without use.
+        </div>
+        <div class="playbar-actions">
+          <button class="btn btn-primary" type="button" id="play-run">Run the scenario</button>
+          <button class="btn" type="button" id="play-new">Start over</button>
+          <button class="btn btn-quiet" type="button" id="play-leave">Leave</button>
+        </div>
       </div>
-      <div class="playbar-actions">
-        <button class="btn btn-primary" type="button" id="play-run">Run the scenario</button>
-        <button class="btn" type="button" id="play-new">Start over</button>
-        <button class="btn btn-quiet" type="button" id="play-leave">Leave</button>
+      <div class="playbar-progress" id="play-progress" role="status" hidden>
+        <div class="playbar-progress-track" aria-hidden="true"><div class="playbar-progress-bar"></div></div>
+        <span>The agent is shopping and the AI is checking each request. This usually takes 10 to 30 seconds.</span>
       </div>
-      <ol class="playbar-log" id="play-log" hidden></ol>
+      <div class="playbar-body" id="play-body" hidden>
+        <div class="playbar-col" id="play-log-col">
+          <h3>What just happened</h3>
+          <ol class="runlog" id="play-log"></ol>
+        </div>
+        <div class="playbar-col">
+          <h3>Things to try <span class="tour-count" id="play-tour-count"></span></h3>
+          <ul class="tour" id="play-tour"></ul>
+        </div>
+      </div>
     </section>
     <section class="kpis" id="kpis" aria-label="Totals"></section>
 

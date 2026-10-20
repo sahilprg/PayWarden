@@ -110,12 +110,21 @@
   });
 
   // ── Private playground ─────────────────────────────────────────────────────
+  // Per-playground notes kept in this tab: the last run log, the last trial purchase, and
+  // whether the audit log was opened (for the "Things to try" checklist).
+  const playKey = (k) => `pw.${k}:${memory.apiBase}`;
+  const playGet = (k) => { try { return JSON.parse(store.get('sessionStorage', playKey(k)) || 'null'); } catch { return null; } };
+  const playSet = (k, v) => store.set('sessionStorage', playKey(k), JSON.stringify(v));
+
+  const TONE = { allow: ['status-allow', '✓'], deny: ['status-deny', '✕'], ask: ['status-ask', '?'], info: ['status-neutral', '•'] };
+  const stepIcon = (tone) => { const t = TONE[tone] || TONE.info; return el('span', { class: `status ${t[0]}` }, el('span', { class: 'status-icon', 'aria-hidden': 'true', text: t[1] })); };
+  const chips = (codes) => (codes && codes.length ? el('div', { class: 'chips' }, codes.map((c) => el('span', { class: 'code-chip', text: c }))) : null);
+
   async function openPlayground() {
     if (!memory.name) { memory.name = ($('gate-name').value || '').trim() || 'Judge'; store.set('localStorage', 'pw.name', memory.name); }
     try {
       const pg = await api('POST', '/v1/playground', undefined, { raw: true });
       setSession(pg.token, pg.apiBase);
-      $('play-log').hidden = true;
       await start();
     } catch (e) {
       showGate(`Could not open a playground: ${e.message}`);
@@ -124,25 +133,76 @@
   $('gate-play').addEventListener('click', openPlayground);
   $('play-new').addEventListener('click', openPlayground);
   $('play-leave').addEventListener('click', () => { setSession(null, ''); showGate(); });
+
   $('play-run').addEventListener('click', async () => {
     const btn = $('play-run');
     btn.disabled = true;
-    btn.textContent = 'Running the scenario…';
+    btn.textContent = 'Running…';
+    $('play-progress').hidden = false;
     try {
       const r = await api('POST', '/v1/scenario', { name: memory.name || 'you' });
-      const log = $('play-log');
-      log.replaceChildren(...r.log.map((line) => el('li', { text: line })));
-      log.hidden = false;
-      toast('Scenario finished. A payment and a wrong delivery are waiting for your decision.');
+      playSet('log', r.log);
+      toast('Done. A payment and a wrong delivery are waiting for your decision below.');
       await refresh();
     } catch (e) {
       if (e instanceof PlaygroundGone) { setSession(null, ''); return showGate(e.message); }
       toast(e.message);
     } finally {
       btn.disabled = false;
-      btn.textContent = 'Run the scenario';
+      $('play-progress').hidden = true;
+      if (lastData) renderPlayground(lastData);
     }
   });
+
+  async function agentTry(button) {
+    button.disabled = true;
+    try {
+      const r = await api('POST', '/v1/scenario/attempt', { name: memory.name || 'you' });
+      playSet('attempt', r.step);
+      toast(r.step.text);
+      await refresh();
+    } catch (e) {
+      if (e instanceof PlaygroundGone) { setSession(null, ''); return showGate(e.message); }
+      toast(e.message);
+    } finally {
+      button.disabled = false;
+    }
+  }
+
+  function renderPlayground(data) {
+    const ran = data.mandates.length > 0;
+    const btn = $('play-run');
+    if (!btn.disabled) btn.textContent = ran ? 'Run it again' : 'Run the scenario';
+    $('play-body').hidden = !ran;
+    if (!ran) return;
+
+    const log = playGet('log') || [];
+    $('play-log-col').hidden = log.length === 0;
+    $('play-log').replaceChildren(...log.map((st) => el('li', {}, stepIcon(st.tone), el('div', {}, el('div', { text: st.text }), chips(st.codes)))));
+
+    const types = new Set(data.audit.recent.map((e) => e.type));
+    const captures = data.audit.recent.filter((e) => e.type === 'PAYMENT_CAPTURED').length;
+    const frozenRefusal = data.decisions.some((d) => d.reasons.some((r) => r.code === 'KILL_SWITCH'));
+    const attempt = playGet('attempt');
+    const items = [
+      { done: types.has('APPROVAL_GRANTED') || types.has('APPROVAL_REJECTED'), title: 'Decide on the $58.00 payment', hint: 'In "Needs your decision" below. Approving re-checks the permit first.' },
+      { done: captures >= 2, title: 'Play the buyer, then capture it', hint: 'In the PayPal orders table: "Approve as buyer", then "Capture".' },
+      { done: types.has('REMEDY_APPROVED'), title: 'Approve the refund for the missing cable', hint: 'The AI proposed it; nothing moves until you approve.' },
+      {
+        done: frozenRefusal,
+        title: 'Freeze the agent, then let it try to buy',
+        hint: 'Pull the lever at the top right, then press the button. The purchase is refused.',
+        action: el('div', { class: 'tour-action' },
+          el('button', { class: 'btn', type: 'button', onclick: (ev) => agentTry(ev.currentTarget) }, 'Let the agent try to buy'),
+          attempt ? el('span', { class: 'tour-result' }, stepIcon(attempt.tone), attempt.text, ...(attempt.codes || []).map((c) => el('span', { class: 'code-chip', text: c }))) : null),
+      },
+      { done: Boolean(playGet('auditSeen')), title: 'Check the audit trail', hint: 'Records, Audit log: every step is hash-chained, so edits would show.' },
+    ];
+    $('play-tour-count').textContent = `${items.filter((i) => i.done).length} of ${items.length} done`;
+    $('play-tour').replaceChildren(...items.map((i) => el('li', { class: i.done ? 'done' : '' },
+      el('span', { class: 'tour-mark', 'aria-hidden': 'true', text: i.done ? '✓' : '' }),
+      el('div', {}, el('div', { class: 'tour-title', text: i.title }), el('div', { class: 'tour-hint', text: i.done ? 'Done.' : i.hint }), i.action || null))));
+  }
 
   // ── Grids ──────────────────────────────────────────────────────────────────
   const theme = agGrid.themeQuartz.withParams({
@@ -269,6 +329,7 @@
 
   for (const [tabId, gridId] of [['tab-orders', 'orders-grid'], ['tab-audit', 'audit-grid']]) {
     $(tabId).addEventListener('click', () => {
+      if (tabId === 'tab-audit' && inPlayground()) { playSet('auditSeen', true); if (lastData) renderPlayground(lastData); }
       for (const [t, g] of [['tab-orders', 'orders-grid'], ['tab-audit', 'audit-grid']]) {
         $(t).setAttribute('aria-selected', String(t === tabId));
         $(g).hidden = g !== gridId;
@@ -332,7 +393,9 @@
     box.className = 'panel permit';
     box.replaceChildren();
     if (!m) {
-      box.append(el('p', { class: 'permit-sub', text: 'No permit yet. Run the demo, or compile and activate a mandate through the API, and it appears here.' }));
+      box.append(el('p', { class: 'permit-sub', text: inPlayground()
+        ? 'No permit yet. Click "Run the scenario" above to start: the AI writes the agent a permit from plain English, the agent goes shopping, and two decisions end up waiting for you.'
+        : 'No permit yet. Run the demo, or compile and activate a mandate through the API, and it appears here.' }));
       return;
     }
     box.classList.add(`permit-${m.status}`);
@@ -395,7 +458,10 @@
       ));
     }
     if (!items.length) {
-      box.append(el('div', { class: 'inbox-empty' }, el('strong', { text: 'Nothing needs you right now.' }), 'Payments above your approval threshold and orders that arrive wrong will wait here for your decision.'));
+      const fresh = inPlayground() && data.mandates.length === 0;
+      box.append(el('div', { class: 'inbox-empty' }, el('strong', { text: 'Nothing needs you right now.' }),
+        fresh ? 'Run the scenario and a payment above your approval line, plus an order that arrived wrong, will wait here for you.'
+              : 'Payments above your approval threshold and orders that arrive wrong will wait here for your decision.'));
       return;
     }
     box.append(el('div', { class: 'inbox' }, items));
@@ -418,6 +484,7 @@
     $('gate').hidden = true;
     $('console').hidden = false;
     $('playbar').hidden = !inPlayground();
+    if (inPlayground()) renderPlayground(data);
     renderEnv(data);
     renderBreaker(data.killSwitch);
     renderKpis(data);

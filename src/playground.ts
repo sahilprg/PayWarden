@@ -17,9 +17,11 @@ export interface PlaygroundLimits {
   scenarioRunsEach: number;
   /** Scenario runs across all playgrounds per hour, to protect the AI quota. */
   scenarioRunsPerHour: number;
+  /** Single trial purchases per playground. */
+  attemptsEach: number;
 }
 
-const DEFAULT_LIMITS: PlaygroundLimits = { maxActive: 40, idleMs: 60 * 60_000, perIpPerHour: 6, scenarioRunsEach: 3, scenarioRunsPerHour: 60 };
+const DEFAULT_LIMITS: PlaygroundLimits = { maxActive: 40, idleMs: 60 * 60_000, perIpPerHour: 6, scenarioRunsEach: 3, scenarioRunsPerHour: 60, attemptsEach: 25 };
 
 interface Playground {
   id: string;
@@ -76,13 +78,20 @@ export class Playgrounds {
     const agentToken = randomBytes(24).toString('base64url');
     const fake = new FakePayPal();
     const boot = createGateway({ config: loadConfig({}), paypal: fake, ai: this.ai });
-    const app = createApp(boot.gateway, { agentToken, ownerToken }, { fake, scenarioGate: () => this.allowScenario(id) });
+    const app = createApp(boot.gateway, { agentToken, ownerToken }, { fake, scenarioGate: () => this.allowScenario(id), attemptGate: () => this.allowAttempt(id) });
     const handler: RequestHandler = (req, res, next) => app(req, res, next);
     this.items.set(id, { id, ownerToken, handler, lastUsed: now });
     return { id, ownerToken, idleMinutes: Math.round(this.limits.idleMs / 60_000) };
   }
 
   private readonly runsById = new Map<string, number>();
+  private readonly attemptsById = new Map<string, number>();
+  private allowAttempt(id: string): string | undefined {
+    const n = this.attemptsById.get(id) ?? 0;
+    if (n >= this.limits.attemptsEach) return 'That is enough tries for one playground. Start a new playground to keep going.';
+    this.attemptsById.set(id, n + 1);
+    return undefined;
+  }
   private allowScenario(id: string): string | undefined {
     const now = this.clock();
     this.scenarioRuns = this.scenarioRuns.filter((t) => now - t < 3_600_000);
