@@ -2,13 +2,21 @@ import { createApp } from './app.js';
 import { createGateway } from './bootstrap.js';
 import { loadConfig } from './config.js';
 import { FakePayPal } from './paypal/fake.js';
+import { FallbackAIProvider } from './ai/fallback.js';
+import { HeuristicProvider } from './ai/heuristic.js';
+import { Playgrounds } from './playground.js';
 
 const config = loadConfig();
 const boot = createGateway({ config });
 const app = createApp(
   boot.gateway,
   { agentToken: config.agentToken, ownerToken: config.ownerToken },
-  { fake: boot.paypal instanceof FakePayPal ? boot.paypal : undefined },
+  {
+    fake: boot.paypal instanceof FakePayPal ? boot.paypal : undefined,
+    // Private visitor playgrounds (offline PayPal, this server's AI). Turn off with PLAYGROUND=0.
+    playgrounds: process.env['PLAYGROUND'] === '0' ? undefined : new Playgrounds(new FallbackAIProvider(boot.ai, new HeuristicProvider())),
+    trustProxy: Boolean(process.env['RENDER']),
+  },
 );
 
 app.listen(config.port, () => {

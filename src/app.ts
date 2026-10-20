@@ -6,6 +6,12 @@ import express, { type NextFunction, type Request, type RequestHandler, type Res
 import { ZodError, z } from 'zod';
 import { PaymentProposalSchema, RemedyProposalSchema } from './domain/schemas.js';
 import { Gateway, GatewayError } from './gateway/gateway.js';
+import { createMcpHandler } from '@modelcontextprotocol/server';
+import { toNodeHandler } from '@modelcontextprotocol/node';
+import { InProcessAgentApi } from './mcp/agent-api.js';
+import { createPaywardenMcpServer } from './mcp/server.js';
+import type { Playgrounds } from './playground.js';
+import { runScenario } from './scenario.js';
 import type { FakePayPal } from './paypal/fake.js';
 
 export interface AuthConfig {
@@ -75,6 +81,12 @@ export interface AppOptions {
    * With real PayPal this never exists.
    */
   fake?: FakePayPal;
+  /** Fake mode only: may this instance run the built-in scenario now? Returns a reason when not. */
+  scenarioGate?: () => string | undefined;
+  /** Enables private visitor playgrounds at POST /v1/playground and /play/:pid/... */
+  playgrounds?: Playgrounds;
+  /** Behind a reverse proxy (Render): use X-Forwarded-For for the client IP. */
+  trustProxy?: boolean;
 }
 
 export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions = {}) {
@@ -96,6 +108,22 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
     res.sendFile(AG_GRID_JS);
   });
   app.use('/assets', pageHeaders, express.static(`${PUBLIC_DIR}/assets`, { index: false, maxAge: '5m' }));
+
+  if (opts.trustProxy) app.set('trust proxy', 1);
+
+  // ── Private playgrounds for visitors: each is a separate, throwaway instance ──
+  if (opts.playgrounds) {
+    const playgrounds = opts.playgrounds;
+    app.post('/v1/playground', (req, res) => {
+      const pg = playgrounds.create(req.ip ?? 'unknown');
+      if (!pg) {
+        res.status(429).json({ error: 'TOO_MANY_PLAYGROUNDS', message: 'Too many playgrounds from this address this hour. Try again later.' });
+        return;
+      }
+      res.status(201).json({ id: pg.id, token: pg.ownerToken, apiBase: `/play/${pg.id}`, idleMinutes: pg.idleMinutes });
+    });
+    app.use('/play/:pid', playgrounds.route());
+  }
 
   app.get('/health', (_req, res) => {
     // Reports the mode so nobody mistakes the offline fake for real PayPal sandbox traffic.
@@ -122,6 +150,23 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
     const proposal = PaymentProposalSchema.parse(req.body);
     const result = await gateway.authorize(proposal);
     res.status(result.status === 'denied' ? 403 : result.status === 'failed' ? 502 : 200).json(result);
+  });
+
+  // MCP front door (Streamable HTTP, stateless). The agent token is the only way in, and the
+  // tools behind it are agent powers only: read the permit, browse, ask to pay, check, capture.
+  const mcpApi = new InProcessAgentApi(gateway);
+  const mcpHandler = toNodeHandler(createMcpHandler(() => createPaywardenMcpServer(mcpApi)));
+  app.all('/mcp', agent, (req, res) => void mcpHandler(req, res, req.body));
+
+  // What the agent may read about its own authority and the merchants it may buy from.
+  app.get('/v1/agent/permits', agent, (req, res) => {
+    const agentId = typeof req.query['agentId'] === 'string' ? req.query['agentId'] : undefined;
+    res.json({ permits: gateway.agentPermits(agentId) });
+  });
+
+  app.get('/v1/catalog', anyone, (req, res) => {
+    const merchantId = typeof req.query['merchantId'] === 'string' ? req.query['merchantId'] : undefined;
+    res.json({ merchants: gateway.catalog(merchantId) });
   });
 
   app.get('/v1/orders/:id', anyone, (req, res) => {
@@ -208,6 +253,26 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
 
   if (opts.fake) {
     const fake = opts.fake;
+    let scenarioBusy = false;
+    // Offline-fake instances only: play the agent and the payer through the standard story.
+    app.post('/v1/scenario', owner, async (req, res) => {
+      if (scenarioBusy) {
+        res.status(409).json({ error: 'SCENARIO_RUNNING', message: 'The scenario is already running.' });
+        return;
+      }
+      const blocked = opts.scenarioGate?.();
+      if (blocked) {
+        res.status(429).json({ error: 'SCENARIO_LIMIT', message: blocked });
+        return;
+      }
+      const { name } = z.object({ name: z.string().min(1).max(80).default('you') }).parse(req.body ?? {});
+      scenarioBusy = true;
+      try {
+        res.json({ log: await runScenario(gateway, fake, name) });
+      } finally {
+        scenarioBusy = false;
+      }
+    });
     app.post('/dev/fake/payer-approve/:paypalOrderId', (req, res) => {
       fake.simulatePayerApproval(param(req, 'paypalOrderId'));
       res.json({ simulated: true, note: 'FAKE mode only: stands in for the human payer approving in PayPal checkout.' });

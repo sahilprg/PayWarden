@@ -15,6 +15,9 @@ export interface CatalogPort {
   lookup(merchantId: string, sku: string): CatalogItem | undefined;
   shippingMinor(merchantId: string, currency: string, items: { sku: string; quantity: number }[]): number;
   taxMinor(merchantId: string, currency: string, items: { sku: string; quantity: number }[]): number;
+  /** Optional browsing support for agents: merchants and their items. */
+  merchants?(): string[];
+  list?(merchantId: string): CatalogItem[];
 }
 
 /** A tiny fictional store used for the demo and the Adversarial Commerce Lab. */
@@ -37,6 +40,14 @@ export class DemoCatalog implements CatalogPort {
 
   lookup(merchantId: string, sku: string): CatalogItem | undefined {
     return merchantId === DemoCatalog.MERCHANT_ID ? this.items.get(sku) : undefined;
+  }
+
+  merchants(): string[] {
+    return [DemoCatalog.MERCHANT_ID];
+  }
+
+  list(merchantId: string): CatalogItem[] {
+    return merchantId === DemoCatalog.MERCHANT_ID ? [...this.items.values()] : [];
   }
 
   shippingMinor(): number {

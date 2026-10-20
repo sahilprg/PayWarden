@@ -40,10 +40,25 @@
         <input id="gate-name" type="text" autocomplete="name" maxlength="80" required>
       </label>
       <button class="btn btn-primary" type="submit">Open console</button>
+      <div class="gate-or">
+        <p><strong>No owner token?</strong> Open a private playground: your own copy of Paywarden with the same rules and live AI, where PayPal is simulated. Nothing you do there touches real accounts or anyone else's view.</p>
+        <button class="btn" type="button" id="gate-play">Open a private playground</button>
+      </div>
     </form>
   </main>
 
   <main class="page" id="console" hidden>
+    <section class="panel playbar" id="playbar" hidden aria-label="Playground">
+      <div class="playbar-text">
+        <strong>Private playground.</strong> Your own copy of Paywarden: the real gateway, rules and AI, with PayPal simulated. It disappears after an hour without use.
+      </div>
+      <div class="playbar-actions">
+        <button class="btn btn-primary" type="button" id="play-run">Run the scenario</button>
+        <button class="btn" type="button" id="play-new">Start over</button>
+        <button class="btn btn-quiet" type="button" id="play-leave">Leave</button>
+      </div>
+      <ol class="playbar-log" id="play-log" hidden></ol>
+    </section>
     <section class="kpis" id="kpis" aria-label="Totals"></section>
 
     <div class="stack">

@@ -12,6 +12,8 @@ AI agents can already find products and start a checkout. What is still missing 
 
 Built for the *Build What's Next with PayPal and AI* hackathon.
 
+**Try it:** [paywarden.onrender.com](https://paywarden.onrender.com) (free hosting: the first visit can take about a minute to wake up). Click **Try it in a private playground**, then **Run the scenario**: you get your own copy of Paywarden with the live AI and simulated PayPal, and can approve, refund and freeze without signing up.
+
 ---
 
 ## Status: what is real, what is not
@@ -26,12 +28,14 @@ Built for the *Build What's Next with PayPal and AI* hackathon.
 | Hash-chained audit log | Built, tested |
 | Fulfilment diff, AI-proposed remedy, merchant-approved refund | Built, tested |
 | PayPal client: Orders v2 create and capture, Payments v2 refund | Built, tested, and **verified end to end against the live PayPal sandbox** (order created, buyer-approved, captured, partially refunded) |
-| PayPal webhook verification | Built; unit-tested against a stub. **Not yet verified with live sandbox webhooks.** |
+| PayPal webhook verification | Built, tested, and **verified with live sandbox webhooks** on the hosted deployment (`WEBHOOK_RECEIVED` after signature verification) |
 | LLM provider (mandate compile, intent judge, injection scan, remedy): Claude, or any OpenAI-compatible API such as Gemini's free tier, with automatic model fallbacks | Built, tested, and **verified live with Google Gemini** during the end-to-end PayPal sandbox run. Claude path tested with a stand-in client only. |
 | Owner console (`/dashboard`, AG Grid) and home page (`/`) | Built; access rules tested; checked in a real browser at desktop and phone widths, light and dark |
 | Adversarial Commerce Lab (9 attack scenarios) | Built, passing (against the offline PayPal fake and offline AI fallback) |
-| Render deployment config (`render.yaml`) | Built; production start checked locally. **Not yet deployed.** |
-| MCP front door, merchant-side verifier, demo video | **Not built yet** (see Roadmap) |
+| Hosted deployment on Render (`render.yaml`) | **Live**, running against the PayPal sandbox with Gemini |
+| MCP front door (`/mcp` over Streamable HTTP, and `npm run mcp` over stdio) | Built; tested end to end with the official MCP client over both transports. Not yet tried with a third-party MCP host. |
+| Private visitor playground (`/dashboard?playground=1`) | Built; isolation and limits tested; checked in a real browser |
+| Merchant-side verifier, demo video | **Not built yet** (see Roadmap) |
 
 Run `npm test` and `npm run lab` to see the first rows for yourself. The first thing to do with real credentials is the sandbox walkthrough below.
 
@@ -126,13 +130,21 @@ Full detail, trust boundaries and the invariants the tests enforce: [docs/ARCHIT
 
 The console page is public, but its data endpoint (`GET /v1/dashboard`) needs the owner token, and the agent token is refused. The token stays in the browser tab's session storage. Pages are served with a strict Content Security Policy (no inline scripts, no framing), and server data is inserted as text, never HTML, because reasons can quote attacker-written page text.
 
+### For AI agents: the MCP front door
+
+Any MCP-capable agent can pay through Paywarden. The MCP server holds only the agent token, so its five tools let an agent read its permit, browse the catalogue, ask to pay, and check or capture an approved order, and nothing else: approving, refunding and freezing stay with the owner. Setup for hosted and local use: [docs/MCP.md](docs/MCP.md).
+
+### The private playground
+
+`/dashboard?playground=1` gives each visitor a separate, throwaway Paywarden: its own gateway, permit, audit log and tokens, the server's AI, and the offline PayPal stand-in so nothing real moves. **Run the scenario** plays the agent through the standard story and leaves a payment above the approval line and a wrong delivery for the visitor to decide. Playgrounds expire after an hour without use, and creation and scenario runs are rate-limited to protect the AI quota. Set `PLAYGROUND=0` to turn them off.
+
 ### API at a glance
 
 Two credentials, on purpose. An agent can *ask* to pay; only the owner can approve, refund, revoke or freeze, so an agent that has been talked into something cannot approve its own request.
 
 | Who | Endpoint |
 |---|---|
-| Agent | `POST /v1/payments/authorize`, `POST /v1/orders/:id/capture`, `GET /v1/orders/:id` |
+| Agent | `GET /v1/agent/permits`, `GET /v1/catalog`, `POST /mcp`, `POST /v1/payments/authorize`, `POST /v1/orders/:id/capture`, `GET /v1/orders/:id` |
 | Owner | `GET /v1/dashboard`, `POST /v1/mandates/compile`, `POST /v1/mandates`, `POST /v1/quotes`, `POST /v1/approvals/:id/resolve`, `POST /v1/kill`, `POST /v1/resume`, `POST /v1/mandates/:id/revoke`, `POST /v1/orders/:id/fulfillment`, `POST /v1/exceptions/:id/approve`, `POST /v1/refunds`, `GET /v1/state`, `GET /v1/audit`, `GET /v1/audit/verify` |
 | PayPal | `POST /webhooks/paypal` (signature verified against the raw body) |
 
@@ -142,7 +154,9 @@ Two credentials, on purpose. An agent can *ask* to pay; only the owner can appro
 
 **PayPal technologies used:** Orders v2 (create, capture), Payments v2 (refund), webhooks with signature verification, `PayPal-Request-Id` idempotency, sandbox environment.
 
-**Sponsor tools used:** AG Grid Community (MIT) for the owner console's request history, orders and audit tables.
+**Agentic commerce:** agents connect through MCP and can only ask; a person approves in PayPal; plain code checks every request against a signed permit and the merchant's own prices.
+
+**Sponsor tools used:** AG Grid Community (MIT) for the owner console's request history, orders and audit tables. Render hosts the live demo.
 
 **AI used and how:** a large language model, either Google Gemini (free tier, via its OpenAI-compatible API, `AI_MODEL`) or Claude (Anthropic API, `ANTHROPIC_MODEL`), for four jobs: compiling a person's plain-English spending rules into a structured mandate, judging whether a basket matches the stated task, detecting instructions aimed at an agent inside untrusted content, and proposing remedies for a wrong order. Every model output is validated against a schema before use. None of these can authorize or move money.
 
@@ -162,10 +176,10 @@ Two credentials, on purpose. An agent can *ask* to pay; only the owner can appro
 
 ## Roadmap
 
-1. Verify webhooks against a hosted deployment, and the Claude path against the live API.
-2. MCP front door so any MCP-capable agent can use the gateway as a PayPal-facing tool.
-3. Merchant-side verifier: a checkout that only accepts agent purchases carrying a valid signed mandate.
-4. Hosted deployment (and PayPal webhooks against it) and a database-backed store.
+1. Merchant-side verifier: a checkout that only accepts agent purchases carrying a valid signed mandate.
+2. A database-backed store, so state survives restarts.
+3. Owner-side signing (the person's device signs the permit), so a compromised gateway cannot mint authority.
+4. Try the MCP front door with more third-party agent hosts, and verify the Claude path against the live API.
 
 ## License
 

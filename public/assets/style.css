@@ -259,3 +259,14 @@ code, .mono { font-family: var(--mono); font-size: 0.86em; }
 .grid-host .ag-layout-auto-height .ag-center-cols-container { min-height: 46px !important; }
 /* Scrollbars inside the grids follow the page theme instead of the OS default. */
 .grid-host * { scrollbar-color: var(--line-strong) transparent; }
+
+/* ── Playground ── */
+.gate-or { margin-top: 20px; padding-top: 18px; border-top: 1px dashed var(--line-strong); }
+.gate-or p { font-size: 14px; color: var(--ink-2); margin-bottom: 12px; }
+.gate-or strong { color: var(--ink); }
+.playbar { display: grid; grid-template-columns: 1fr auto; gap: 12px 20px; align-items: center; padding: 14px 18px; margin-bottom: 20px; border-color: var(--accent); }
+.playbar-text { font-size: 14px; color: var(--ink-2); }
+.playbar-text strong { color: var(--ink); }
+.playbar-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.playbar-log { grid-column: 1 / -1; margin: 0; padding: 10px 0 0 22px; border-top: 1px solid var(--line); font-size: 14px; color: var(--ink-2); display: grid; gap: 4px; }
+@media (max-width: 760px) { .playbar { grid-template-columns: 1fr; } .playbar-actions { justify-content: flex-start; } }

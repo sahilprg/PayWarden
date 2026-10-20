@@ -23,7 +23,19 @@
     set(area, key, value) { try { window[area].setItem(key, value); } catch { /* storage unavailable: keep in memory */ } },
     del(area, key) { try { window[area].removeItem(key); } catch { /* ignore */ } },
   };
-  const memory = { token: store.get('sessionStorage', 'pw.token'), name: store.get('localStorage', 'pw.name') };
+  // apiBase is '' for the real instance, or '/play/<id>' inside a private playground.
+  const memory = {
+    token: store.get('sessionStorage', 'pw.token'),
+    name: store.get('localStorage', 'pw.name'),
+    apiBase: store.get('sessionStorage', 'pw.apiBase') || '',
+  };
+  const inPlayground = () => memory.apiBase.startsWith('/play/');
+  function setSession(token, apiBase) {
+    memory.token = token;
+    memory.apiBase = apiBase;
+    if (token) store.set('sessionStorage', 'pw.token', token); else store.del('sessionStorage', 'pw.token');
+    if (apiBase) store.set('sessionStorage', 'pw.apiBase', apiBase); else store.del('sessionStorage', 'pw.apiBase');
+  }
 
   const money = (minor, currency = 'USD') =>
     minor === undefined || minor === null ? '' : new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(minor / 100);
@@ -49,14 +61,16 @@
 
   // ── API ────────────────────────────────────────────────────────────────────
   class Unauthorized extends Error {}
-  async function api(method, path, body) {
-    const res = await fetch(path, {
+  class PlaygroundGone extends Error {}
+  async function api(method, path, body, { raw = false } = {}) {
+    const res = await fetch(raw ? path : memory.apiBase + path, {
       method,
       headers: { Authorization: `Bearer ${memory.token || ''}`, ...(body ? { 'Content-Type': 'application/json' } : {}) },
       body: body ? JSON.stringify(body) : undefined,
       cache: 'no-store',
     });
     const json = await res.json().catch(() => ({}));
+    if (res.status === 404 && json.error === 'PLAYGROUND_GONE') throw new PlaygroundGone(json.message);
     if (res.status === 401) throw new Unauthorized(json.message || 'Owner token rejected.');
     if (!res.ok) throw new Error(json.message || (json.issues && json.issues.map((i) => i.message).join('; ')) || `Request failed (${res.status})`);
     return json;
@@ -68,6 +82,7 @@
       toast(label);
       await refresh();
     } catch (e) {
+      if (e instanceof PlaygroundGone) { setSession(null, ''); return showGate(e.message); }
       if (e instanceof Unauthorized) return showGate(e.message);
       toast(e.message);
     }
@@ -87,12 +102,46 @@
   }
   $('gate-form').addEventListener('submit', async (ev) => {
     ev.preventDefault();
-    memory.token = $('gate-token').value.trim();
     memory.name = $('gate-name').value.trim();
-    store.set('sessionStorage', 'pw.token', memory.token);
     store.set('localStorage', 'pw.name', memory.name);
+    setSession($('gate-token').value.trim(), '');
     $('gate-token').value = '';
     await start();
+  });
+
+  // ── Private playground ─────────────────────────────────────────────────────
+  async function openPlayground() {
+    if (!memory.name) { memory.name = ($('gate-name').value || '').trim() || 'Judge'; store.set('localStorage', 'pw.name', memory.name); }
+    try {
+      const pg = await api('POST', '/v1/playground', undefined, { raw: true });
+      setSession(pg.token, pg.apiBase);
+      $('play-log').hidden = true;
+      await start();
+    } catch (e) {
+      showGate(`Could not open a playground: ${e.message}`);
+    }
+  }
+  $('gate-play').addEventListener('click', openPlayground);
+  $('play-new').addEventListener('click', openPlayground);
+  $('play-leave').addEventListener('click', () => { setSession(null, ''); showGate(); });
+  $('play-run').addEventListener('click', async () => {
+    const btn = $('play-run');
+    btn.disabled = true;
+    btn.textContent = 'Running the scenario…';
+    try {
+      const r = await api('POST', '/v1/scenario', { name: memory.name || 'you' });
+      const log = $('play-log');
+      log.replaceChildren(...r.log.map((line) => el('li', { text: line })));
+      log.hidden = false;
+      toast('Scenario finished. A payment and a wrong delivery are waiting for your decision.');
+      await refresh();
+    } catch (e) {
+      if (e instanceof PlaygroundGone) { setSession(null, ''); return showGate(e.message); }
+      toast(e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Run the scenario';
+    }
   });
 
   // ── Grids ──────────────────────────────────────────────────────────────────
@@ -183,6 +232,9 @@
           const wrap = el('span', { style: 'display:inline-flex;gap:8px;align-items:center' });
           if (o.approveUrl && /^https:\/\/www\.(sandbox\.)?paypal\.com\//.test(o.approveUrl)) {
             wrap.append(el('a', { href: o.approveUrl, target: '_blank', rel: 'noopener noreferrer' }, 'Pay in PayPal'));
+          } else if (lastData && lastData.paypal === 'fake' && o.status === 'created') {
+            wrap.append(el('button', { class: 'btn btn-quiet', type: 'button', style: 'min-height:28px',
+              onclick: () => act('The buyer approved in (simulated) PayPal. You can capture now.', () => api('POST', `/dev/fake/payer-approve/${encodeURIComponent(o.paypalOrderId)}`)) }, 'Approve as buyer'));
           }
           wrap.append(el('button', { class: 'btn btn-quiet', type: 'button', style: 'min-height:28px',
             onclick: () => act(`Captured ${money(o.totalMinor, o.currency)}.`, () => api('POST', `/v1/orders/${encodeURIComponent(o.id)}/capture`)) }, 'Capture'));
@@ -195,7 +247,8 @@
     const d = e.data || {};
     const parts = [];
     for (const k of ['orderId', 'approvalId', 'exceptionId', 'mandateId', 'merchantId', 'by', 'approvedBy', 'action', 'code', 'type', 'step']) {
-      if (d[k]) parts.push(`${k} ${typeof d[k] === 'string' && d[k].length > 20 ? short(d[k]) : d[k]}`);
+      // Shorten long ids only; event types such as CHECKOUT.ORDER.APPROVED stay whole.
+      if (d[k]) parts.push(`${k} ${typeof d[k] === 'string' && /Id$/.test(k) && d[k].length > 20 ? short(d[k]) : d[k]}`);
     }
     for (const k of ['totalMinor', 'amountMinor', 'refundedMinor']) if (typeof d[k] === 'number') parts.push(money(d[k]));
     if (Array.isArray(d.codes)) parts.push(d.codes.join(', '));
@@ -227,7 +280,7 @@
   function renderEnv(data) {
     const env = $('env');
     env.replaceChildren(
-      el('span', { class: `env-pill${data.paypal === 'fake' ? ' env-pill-warn' : ''}` }, 'PayPal ', el('b', { text: data.paypal === 'fake' ? 'offline fake' : 'sandbox' })),
+      el('span', { class: `env-pill${data.paypal === 'fake' ? ' env-pill-warn' : ''}` }, 'PayPal ', el('b', { text: data.paypal === 'fake' ? (inPlayground() ? 'simulated' : 'offline fake') : 'sandbox' })),
       el('span', { class: `env-pill${data.aiProvider.startsWith('heuristic') ? ' env-pill-warn' : ''}` }, 'AI ', el('b', { text: data.aiProvider.split(' (')[0] })),
       el('span', { class: 'env-pill' }, 'Acting as ', el('b', { text: memory.name || 'owner' })),
     );
@@ -253,7 +306,7 @@
     const c = data.counts;
     const tile = (value, label) => el('div', { class: 'kpi' }, el('div', { class: 'kpi-value', text: value }), el('div', { class: 'kpi-label', text: label }));
     $('kpis').replaceChildren(
-      tile(money(c.capturedMinor), 'Paid through PayPal'),
+      tile(money(c.capturedMinor), data.paypal === 'fake' ? 'Paid (PayPal simulated)' : 'Paid through PayPal'),
       tile(money(c.refundedMinor), 'Refunded'),
       tile(String(c.allowed), 'Requests allowed'),
       tile(String(c.needsApproval), 'Sent to you'),
@@ -337,7 +390,7 @@
         el('ul', { class: 'ticket-lines' }, x.diffs.map((d) => el('li', { text: `${d.sku}: expected ${d.expectedQty}, shipped ${d.shippedQty}` }))),
         r ? el('p', { class: 'ticket-why' }, el('b', { text: `AI suggests ${r.action.replace(/_/g, ' ')}: ` }), r.rationale || '') : null,
         el('div', { class: 'ticket-actions' },
-          el('button', { class: 'btn btn-primary', type: 'button', onclick: () => act(isRefund ? `Refund of ${money(r.refundAmountMinor, cur)} sent through ${data.paypal === 'fake' ? 'the offline PayPal fake' : 'the PayPal sandbox'}.` : 'Remedy approved.', () => api('POST', `/v1/exceptions/${x.id}/approve`, { approvedBy: memory.name || 'owner' })) },
+          el('button', { class: 'btn btn-primary', type: 'button', onclick: () => act(isRefund ? `Refund of ${money(r.refundAmountMinor, cur)} sent through ${data.paypal === 'fake' ? (inPlayground() ? 'simulated PayPal' : 'the offline PayPal fake') : 'the PayPal sandbox'}.` : 'Remedy approved.', () => api('POST', `/v1/exceptions/${x.id}/approve`, { approvedBy: memory.name || 'owner' })) },
             isRefund ? `Approve refund of ${money(r.refundAmountMinor, cur)}` : 'Approve remedy')),
       ));
     }
@@ -364,6 +417,7 @@
     lastData = data;
     $('gate').hidden = true;
     $('console').hidden = false;
+    $('playbar').hidden = !inPlayground();
     renderEnv(data);
     renderBreaker(data.killSwitch);
     renderKpis(data);
@@ -381,7 +435,10 @@
     stopPolling();
     timer = setInterval(() => {
       if (document.visibilityState !== 'visible') return;
-      refresh().catch((e) => { if (e instanceof Unauthorized) showGate(e.message); });
+      refresh().catch((e) => {
+        if (e instanceof PlaygroundGone) { setSession(null, ''); showGate(e.message); }
+        else if (e instanceof Unauthorized) showGate(e.message);
+      });
     }, 3000);
   }
   async function start() {
@@ -390,9 +447,16 @@
       await refresh();
       startPolling();
     } catch (e) {
-      if (e instanceof Unauthorized) { store.del('sessionStorage', 'pw.token'); memory.token = null; return showGate('That token was not accepted. Use the OWNER_API_TOKEN value, not the agent token.'); }
+      if (e instanceof PlaygroundGone) { setSession(null, ''); return showGate(e.message); }
+      if (e instanceof Unauthorized) { setSession(null, ''); return showGate('That token was not accepted. Use the OWNER_API_TOKEN value, not the agent token.'); }
       showGate(`Could not load the console: ${e.message}`);
     }
   }
-  start();
+  // /dashboard?playground=1 (the home page's "Try it" link) opens a playground straight away.
+  if (new URLSearchParams(location.search).get('playground') === '1' && !inPlayground()) {
+    history.replaceState(null, '', location.pathname);
+    openPlayground();
+  } else {
+    start();
+  }
 })();

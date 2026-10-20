@@ -701,6 +701,56 @@ export class Gateway {
   }
 
   /**
+   * What an agent may know about its own authority: the permits it can spend under (rules
+   * written out by code), what is left in each window, and the quotes the owner approved.
+   * Read-only, and nothing here lets the agent change any of it.
+   */
+  agentPermits(agentId?: string) {
+    const s = this.d.store;
+    const now = this.d.now();
+    return [...s.mandates.values()]
+      .filter((m) => !agentId || m.body.agentId === agentId)
+      .map((m) => {
+        const b = m.body;
+        const problem = this.activeProblem(b, now);
+        const spent = s.spentInWindow(b.id, now, b.periodDays);
+        const msLeft = Date.parse(b.expiresAt) - now.getTime();
+        return {
+          mandateId: b.id,
+          agentId: b.agentId,
+          task: b.task,
+          currency: b.currency,
+          usable: !problem,
+          blockedBecause: problem?.message,
+          rules: summarizeMandate({ ...b, expiresInHours: Math.max(1, Math.ceil(msLeft / 3_600_000)) }),
+          perPurchaseLimitMinor: b.perPurchaseLimitMinor,
+          approvalThresholdMinor: b.approvalThresholdMinor,
+          periodLimitMinor: b.periodLimitMinor,
+          periodDays: b.periodDays,
+          spentInPeriodMinor: spent,
+          remainingInPeriodMinor: Math.max(0, b.periodLimitMinor - spent),
+          allowedMerchants: b.allowedMerchants,
+          requireQuote: b.requireQuote,
+          expiresAt: b.expiresAt,
+          openQuotes: [...s.quotes.values()]
+            .filter((q) => q.mandateId === b.id && !q.consumedByOrderId)
+            .map((q) => ({ quoteId: q.id, merchantId: q.merchantId, items: q.items, maxTotalMinor: q.maxTotalMinor })),
+        };
+      });
+  }
+
+  catalog(merchantId?: string) {
+    const c = this.d.catalog;
+    const merchants = c.merchants?.() ?? [];
+    const pick = merchantId ? merchants.filter((m) => m === merchantId) : merchants;
+    return pick.map((m) => ({
+      merchantId: m,
+      items: (c.list?.(m) ?? []).map((i) => ({ sku: i.sku, name: i.name, category: i.category, unitPriceMinor: i.unitPriceMinor, currency: i.currency })),
+      shippingMinor: c.shippingMinor(m, 'USD', []),
+    }));
+  }
+
+  /**
    * Everything the owner dashboard shows, in one read. Derived from the store and
    * the audit log; it changes nothing.
    */

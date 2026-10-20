@@ -240,3 +240,26 @@ describe('owner console and pages', () => {
     }
   });
 });
+
+describe('what an agent may read', () => {
+  it('shows the agent its permit, remaining budget and open quotes, but only with the agent token', async () => {
+    expect((await call('GET', '/v1/agent/permits')).status).toBe(401);
+    expect((await call('GET', '/v1/agent/permits', OWNER)).status).toBe(401);
+    const res = await call('GET', '/v1/agent/permits?agentId=test-agent', AGENT);
+    expect(res.status).toBe(200);
+    const p = res.json.permits[0];
+    expect(p).toMatchObject({ agentId: 'test-agent', usable: true, perPurchaseLimitMinor: 6000, periodLimitMinor: 20000 });
+    expect(p.rules[0]).toContain('USD 60.00');
+    expect(p.remainingInPeriodMinor).toBe(p.periodLimitMinor - p.spentInPeriodMinor);
+    expect((await call('GET', '/v1/agent/permits?agentId=someone-else', AGENT)).json.permits).toEqual([]);
+  });
+
+  it('lists the merchant catalogue for agent or owner, with prices from the merchant', async () => {
+    expect((await call('GET', '/v1/catalog')).status).toBe(401);
+    const res = await call('GET', '/v1/catalog?merchantId=fernlight-electronics', AGENT);
+    expect(res.status).toBe(200);
+    const items = res.json.merchants[0].items;
+    expect(items.find((i: any) => i.sku === 'charger-65w-uk')).toMatchObject({ unitPriceMinor: 3400, category: 'electronics' });
+    expect((await call('GET', '/v1/catalog', OWNER)).status).toBe(200);
+  });
+});

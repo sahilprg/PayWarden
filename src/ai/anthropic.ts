@@ -116,6 +116,7 @@ export class AnthropicProvider implements AIProvider {
       `You help a merchant resolve a paid order that shipped wrongly. ${GUARD} ` +
       'Output {"action": one of correct_shipment|exchange|partial_refund|full_refund|request_evidence|escalate, ' +
       '"refundAmountMinor": integer minor units (only for refunds, never above the remaining refundable amount), "rationale": string}. ' +
+      'Write the rationale for a person: one or two plain sentences, with money as currency amounts such as $9.00, never as minor units or cents. ' +
       'You only PROPOSE; a human merchant decides.';
     const user =
       `<merchant_policy>${input.policyText}</merchant_policy>\n` +
