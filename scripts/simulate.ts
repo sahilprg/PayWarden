@@ -105,7 +105,8 @@ async function main() {
   const remedy = recon.json.exception?.proposedRemedy;
   say(`6. Delivery arrived without the cable. AI proposes: ${remedy?.action ?? 'nothing'}${remedy?.refundAmountMinor ? ` of $${(remedy.refundAmountMinor / 100).toFixed(2)}` : ''}. Waiting for you.`);
 
-  const url = process.env['PUBLIC_BASE_URL'] ?? BASE;
+  // Against a hosted server (BASE_URL set), point at it; in a Codespace, at the forwarded address.
+  const url = process.env['BASE_URL'] ? BASE : (process.env['PUBLIC_BASE_URL'] ?? BASE);
   say(`\nOpen the owner console to decide: ${url.replace(/\/$/, '')}/dashboard`);
 }
 

@@ -5,7 +5,7 @@
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=20"
+    "node": ">=22.9 <25"
   },
   "scripts": {
     "start": "node --env-file-if-exists=.env --import tsx src/server.ts",

@@ -119,6 +119,9 @@
     animateRows: false,
     suppressCellFocus: false,
     domLayout: 'autoHeight',
+    // Columns always share the grid's width, so nothing hides off to the right.
+    autoSizeStrategy: { type: 'fitGridWidth' },
+    onGridSizeChanged: (e) => e.api.sizeColumnsToFit(),
     pagination: true,
     paginationPageSize: 10,
     paginationPageSizeSelector: [10, 25, 50],
@@ -168,13 +171,13 @@
     columnDefs: [
       { field: 'createdAt', headerName: 'Created', valueFormatter: (p) => time(p.value), sort: 'desc', minWidth: 150, maxWidth: 170 },
       { field: 'paypalOrderId', headerName: 'PayPal order', minWidth: 170, maxWidth: 190, cellClass: 'mono' },
-      { headerName: 'Items', valueGetter: (p) => p.data.proposal.items.map((i) => `${i.quantity}× ${i.name}`).join(', '), flex: 1, minWidth: 200,
+      { headerName: 'Items', valueGetter: (p) => p.data.proposal.items.map((i) => `${i.quantity}× ${i.name}`).join(', '), flex: 1, minWidth: 160,
         tooltipValueGetter: (p) => p.data.proposal.items.map((i) => `${i.quantity}× ${i.name}`).join(', ') },
       { field: 'totalMinor', headerName: 'Total', valueFormatter: (p) => money(p.value, p.data.currency), type: 'rightAligned', minWidth: 90, maxWidth: 110 },
       { field: 'status', headerName: 'Status', minWidth: 160, maxWidth: 180,
         cellRenderer: (p) => { const s = ORDER_STATUS[p.value] || ['status-neutral', '•', p.value]; return statusMark(s[0], s[2], s[1]); } },
       { field: 'refundedMinor', headerName: 'Refunded', valueFormatter: (p) => (p.value ? money(p.value, p.data.currency) : ''), type: 'rightAligned', minWidth: 90, maxWidth: 110 },
-      { headerName: 'Next step', minWidth: 200, maxWidth: 230, sortable: false, cellRenderer: (p) => {
+      { headerName: 'Next step', minWidth: 170, maxWidth: 230, sortable: false, cellRenderer: (p) => {
           const o = p.data;
           if (o.status !== 'created' && o.status !== 'approved') return '';
           const wrap = el('span', { style: 'display:inline-flex;gap:8px;align-items:center' });

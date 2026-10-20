@@ -30,7 +30,8 @@ Built for the *Build What's Next with PayPal and AI* hackathon.
 | LLM provider (mandate compile, intent judge, injection scan, remedy): Claude, or any OpenAI-compatible API such as Gemini's free tier, with automatic model fallbacks | Built, tested, and **verified live with Google Gemini** during the end-to-end PayPal sandbox run. Claude path tested with a stand-in client only. |
 | Owner console (`/dashboard`, AG Grid) and home page (`/`) | Built; access rules tested; checked in a real browser at desktop and phone widths, light and dark |
 | Adversarial Commerce Lab (9 attack scenarios) | Built, passing (against the offline PayPal fake and offline AI fallback) |
-| MCP front door, merchant-side verifier, hosted deployment, demo video | **Not built yet** (see Roadmap) |
+| Render deployment config (`render.yaml`) | Built; production start checked locally. **Not yet deployed.** |
+| MCP front door, merchant-side verifier, demo video | **Not built yet** (see Roadmap) |
 
 Run `npm test` and `npm run lab` to see the first rows for yourself. The first thing to do with real credentials is the sandbox walkthrough below.
 
@@ -65,6 +66,10 @@ With no credentials set, Paywarden runs in **fake mode**: an offline stand-in fo
 Sandbox tip: use **US** sandbox accounts for both the seller (the Business account your app is linked to) and the buyer (a Personal account). Accounts created with country IN can hit India-specific PayPal restrictions, and logging in to checkout with the seller account fails ("you are logging in to the account of the seller").
 
 The server refuses to start against a non-sandbox PayPal URL unless `ALLOW_LIVE=1` is set.
+
+### Hosting it
+
+`render.yaml` deploys the demo to Render's free plan, where PayPal webhooks also work. Step-by-step guide: [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ---
 

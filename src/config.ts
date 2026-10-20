@@ -27,7 +27,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   return {
     port,
-    publicBaseUrl: (env['PUBLIC_BASE_URL'] ?? `http://localhost:${port}`).replace(/\/$/, ''),
+    // On Render, RENDER_EXTERNAL_URL is the service's public https address.
+    publicBaseUrl: (env['PUBLIC_BASE_URL'] || env['RENDER_EXTERNAL_URL'] || `http://localhost:${port}`).replace(/\/$/, ''),
     paypal: {
       clientId: env['PAYPAL_CLIENT_ID'] || undefined,
       clientSecret: env['PAYPAL_CLIENT_SECRET'] || undefined,
