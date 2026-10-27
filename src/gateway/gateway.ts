@@ -646,20 +646,41 @@ export class Gateway {
 
   // ───────────────────────── Webhooks ─────────────────────────
 
-  async handleWebhook(headers: Record<string, string | undefined>, rawBody: string): Promise<{ handled: boolean }> {
-    const valid = await this.d.paypal.verifyWebhook({ headers, rawBody });
-    if (!valid) {
-      this.d.audit.append('WEBHOOK_REJECTED', { reason: 'signature verification failed' });
-      throw new GatewayError('WEBHOOK_SIGNATURE_INVALID', 'Webhook signature could not be verified.', 401);
+  /**
+   * Counts a rejected webhook. Anyone can post to the webhook URL, so rejections are written
+   * to the audit log at most once a minute (with the count) rather than once per request.
+   */
+  private rejectWebhook(code: string, message: string, httpStatus: number): GatewayError {
+    const w = this.d.store.webhookRejections;
+    w.total += 1;
+    w.sinceLastAudit += 1;
+    const now = this.d.now().getTime();
+    if (now - w.lastAuditAt >= 60_000) {
+      this.d.audit.append('WEBHOOK_REJECTED', { reason: code, count: w.sinceLastAudit });
+      w.lastAuditAt = now;
+      w.sinceLastAudit = 0;
     }
-    let event: { id?: string; event_type?: string; resource?: Record<string, unknown> };
+    return new GatewayError(code, message, httpStatus);
+  }
+
+  async handleWebhook(headers: Record<string, string | undefined>, rawBody: string): Promise<{ handled: boolean }> {
+    // Cheap checks first, so junk never costs a call to PayPal: the body must be a JSON
+    // object with an id and type (this also keeps the raw bytes safe to embed in the
+    // verification request), and an event already handled is skipped.
+    let event: { id?: unknown; event_type?: unknown; resource?: Record<string, unknown> };
     try {
       event = JSON.parse(rawBody) as typeof event;
     } catch {
-      throw new GatewayError('WEBHOOK_BAD_BODY', 'Webhook body is not JSON.', 400);
+      throw this.rejectWebhook('WEBHOOK_BAD_BODY', 'Webhook body is not JSON.', 400);
     }
-    if (!event.id || !event.event_type) throw new GatewayError('WEBHOOK_BAD_BODY', 'Webhook is missing id or event_type.', 400);
+    if (!event || typeof event !== 'object' || Array.isArray(event) || typeof event.id !== 'string' || typeof event.event_type !== 'string') {
+      throw this.rejectWebhook('WEBHOOK_BAD_BODY', 'Webhook is missing id or event_type.', 400);
+    }
     if (this.d.store.webhookEvents.has(event.id)) return { handled: false };
+
+    const valid = await this.d.paypal.verifyWebhook({ headers, rawBody });
+    if (!valid) throw this.rejectWebhook('WEBHOOK_SIGNATURE_INVALID', 'Webhook signature could not be verified.', 401);
+
     this.d.store.webhookEvents.add(event.id);
     this.d.audit.append('WEBHOOK_RECEIVED', { eventId: event.id, type: event.event_type });
 

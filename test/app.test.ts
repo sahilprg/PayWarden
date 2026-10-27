@@ -168,7 +168,10 @@ describe('fake-mode payer hook', () => {
       const r = await buyCharger(local);
       const cap = (token: string) => fetch(`${url}/v1/orders/${r.orderId}/capture`, { method: 'POST', headers: { authorization: `Bearer ${token}` } });
       expect((await cap(AGENT)).status).toBe(502); // payer has not approved yet
-      expect((await fetch(`${url}/dev/fake/payer-approve/${r.paypalOrderId}`, { method: 'POST' })).status).toBe(200);
+      // The stand-in needs the owner token; the agent cannot play its own payer.
+      expect((await fetch(`${url}/dev/fake/payer-approve/${r.paypalOrderId}`, { method: 'POST' })).status).toBe(401);
+      expect((await fetch(`${url}/dev/fake/payer-approve/${r.paypalOrderId}`, { method: 'POST', headers: { authorization: `Bearer ${AGENT}` } })).status).toBe(401);
+      expect((await fetch(`${url}/dev/fake/payer-approve/${r.paypalOrderId}`, { method: 'POST', headers: { authorization: `Bearer ${OWNER}` } })).status).toBe(200);
       expect((await cap(AGENT)).status).toBe(200);
     } finally {
       s.close();

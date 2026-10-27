@@ -1,4 +1,3 @@
-import { timingSafeEqual } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -13,37 +12,10 @@ import { createPaywardenMcpServer } from './mcp/server.js';
 import type { Playgrounds } from './playground.js';
 import { agentAttempt, runScenario } from './scenario.js';
 import type { FakePayPal } from './paypal/fake.js';
+import { actorName, bearer, Credentials, type AuthConfig, type Identity, type Role } from './http/auth.js';
+import { RateLimiter, rateLimit } from './http/rate-limit.js';
 
-export interface AuthConfig {
-  agentToken: string;
-  ownerToken: string;
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const x = Buffer.from(a);
-  const y = Buffer.from(b);
-  return x.length === y.length && timingSafeEqual(x, y);
-}
-
-function bearer(req: Request): string {
-  const h = req.header('authorization') ?? '';
-  return h.startsWith('Bearer ') ? h.slice(7) : '';
-}
-
-/**
- * Two separate credentials on purpose. An agent can ask to pay; only the owner
- * can approve, change mandates, refund or flip the kill switch. An agent that
- * has been talked into something cannot approve its own request.
- */
-const requireToken =
-  (expected: string, who: string): RequestHandler =>
-  (req, res, next) => {
-    if (!safeEqual(bearer(req), expected)) {
-      res.status(401).json({ error: 'UNAUTHORIZED', message: `A valid ${who} token is required.` });
-      return;
-    }
-    next();
-  };
+export type { AuthConfig } from './http/auth.js';
 
 const param = (req: Request, name: string): string => String(req.params[name] ?? '');
 
@@ -89,18 +61,74 @@ export interface AppOptions {
   playgrounds?: Playgrounds;
   /** Behind a reverse proxy (Render): use X-Forwarded-For for the client IP. */
   trustProxy?: boolean;
+  /** Send Strict-Transport-Security (only behind HTTPS, e.g. in production). */
+  hsts?: boolean;
+  /** Per-IP limits; defaults suit one small instance. */
+  limits?: { apiPerMinute?: number; webhookPerMinute?: number; authFailuresPer10Min?: number };
 }
+
+/** Headers for every response: no sniffing, no framing, no referrer leaks, HTTPS only when hosted. */
+const baseHeaders =
+  (hsts: boolean): RequestHandler =>
+  (_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+    if (hsts) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    next();
+  };
+
+const identityOf = (res: Response): Identity => res.locals['identity'] as Identity;
 
 export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions = {}) {
   const app = express();
-  const agent = requireToken(auth.agentToken, 'agent');
-  const owner = requireToken(auth.ownerToken, 'owner');
+  app.disable('x-powered-by');
+  if (opts.trustProxy) app.set('trust proxy', 1);
+  app.use(baseHeaders(Boolean(opts.hsts)));
+
+  /**
+   * Two kinds of credential on purpose. An agent can ask to pay; only an owner can approve,
+   * change mandates, refund or flip the kill switch, so an agent that has been talked into
+   * something cannot approve its own request. Repeated bad tokens from one address are throttled.
+   */
+  const credentials = new Credentials(auth);
+  const authFailures = new RateLimiter(opts.limits?.authFailuresPer10Min ?? 30, 10 * 60_000);
+  const requireRole =
+    (roles: Role[], who: string): RequestHandler =>
+    (req, res, next) => {
+      const ip = req.ip ?? 'unknown';
+      if (authFailures.blocked(ip)) {
+        res.status(429).json({ error: 'TOO_MANY_FAILED_ATTEMPTS', message: 'Too many requests with a wrong token from this address. Wait a few minutes.' });
+        return;
+      }
+      const identity = credentials.identify(bearer(req));
+      if (!identity || !roles.includes(identity.role)) {
+        authFailures.hit(ip);
+        res.status(401).json({ error: 'UNAUTHORIZED', message: `A valid ${who} token is required.` });
+        return;
+      }
+      res.locals['identity'] = identity;
+      next();
+    };
+  const agent = requireRole(['agent'], 'agent');
+  const owner = requireRole(['owner'], 'owner');
   // Either credential, for read-only status such as an order the agent created.
-  const anyone: RequestHandler = (req, res, next) => {
-    const t = bearer(req);
-    if (safeEqual(t, auth.agentToken) || safeEqual(t, auth.ownerToken)) return next();
-    res.status(401).json({ error: 'UNAUTHORIZED', message: 'A valid token is required.' });
+  const anyone = requireRole(['agent', 'owner'], '');
+
+  /** An agent token bound to one agent may only see and act on that agent's orders. */
+  const visibleOrder = (res: Response, orderId: string) => {
+    const order = gateway.getOrder(orderId);
+    const id = identityOf(res);
+    if (id.role === 'agent' && id.agentId && order.proposal.agentId !== id.agentId) {
+      throw new GatewayError('ORDER_NOT_FOUND', 'No such order.', 404);
+    }
+    return order;
   };
+  const who = (res: Response, typed: unknown) => actorName(identityOf(res), typeof typed === 'string' ? typed : undefined);
+
+  const api = rateLimit(new RateLimiter(opts.limits?.apiPerMinute ?? 600, 60_000), 'Too many requests from this address. Slow down and try again in a minute.');
+  app.use(['/v1', '/mcp', '/play'], api);
 
   // ── Pages: a public home page and the owner dashboard (its data needs the owner token) ──
   app.get('/', pageHeaders, (_req, res) => res.sendFile('index.html', { root: PUBLIC_DIR }));
@@ -109,9 +137,7 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
     res.setHeader('Cache-Control', 'public, max-age=86400');
     res.sendFile(AG_GRID_JS);
   });
-  app.use('/assets', pageHeaders, express.static(`${PUBLIC_DIR}/assets`, { index: false, maxAge: '5m' }));
-
-  if (opts.trustProxy) app.set('trust proxy', 1);
+  app.use('/assets', pageHeaders, express.static(`${PUBLIC_DIR}/assets`, { index: false, maxAge: 0 }));
 
   // ── Private playgrounds for visitors: each is a separate, throwaway instance ──
   if (opts.playgrounds) {
@@ -134,7 +160,8 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
 
   // PayPal webhooks need the exact raw bytes for signature verification, so this
   // route is registered before the JSON body parser.
-  app.post('/webhooks/paypal', express.raw({ type: '*/*', limit: '1mb' }), async (req, res, next) => {
+  const webhookLimit = rateLimit(new RateLimiter(opts.limits?.webhookPerMinute ?? 120, 60_000), 'Too many webhook calls.');
+  app.post('/webhooks/paypal', webhookLimit, express.raw({ type: '*/*', limit: '1mb' }), async (req, res, next) => {
     try {
       const raw = Buffer.isBuffer(req.body) ? req.body.toString('utf8') : '';
       const headers: Record<string, string | undefined> = {};
@@ -150,20 +177,35 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
   // ── Agent ──
   app.post('/v1/payments/authorize', agent, async (req, res) => {
     const proposal = PaymentProposalSchema.parse(req.body);
+    const bound = identityOf(res).agentId;
+    if (bound && proposal.agentId !== bound) {
+      res.status(403).json({ error: 'AGENT_TOKEN_MISMATCH', message: `This token belongs to agent "${bound}" and cannot ask to pay for "${proposal.agentId}".` });
+      return;
+    }
     const result = await gateway.authorize(proposal);
     res.status(result.status === 'denied' ? 403 : result.status === 'failed' ? 502 : 200).json(result);
   });
 
   // MCP front door (Streamable HTTP, stateless). The agent token is the only way in, and the
   // tools behind it are agent powers only: read the permit, browse, ask to pay, check, capture.
-  const mcpApi = new InProcessAgentApi(gateway);
-  const mcpHandler = toNodeHandler(createMcpHandler(() => createPaywardenMcpServer(mcpApi)));
-  app.all('/mcp', agent, (req, res) => void mcpHandler(req, res, req.body));
+  // One handler per agent identity, so a bound token's tools only see that agent's permits and orders.
+  const mcpHandlers = new Map<string, ReturnType<typeof toNodeHandler>>();
+  const mcpFor = (agentId: string | undefined) => {
+    const key = agentId ?? '*';
+    let h = mcpHandlers.get(key);
+    if (!h) {
+      const api = new InProcessAgentApi(gateway, agentId);
+      h = toNodeHandler(createMcpHandler(() => createPaywardenMcpServer(api)));
+      mcpHandlers.set(key, h);
+    }
+    return h;
+  };
+  app.all('/mcp', agent, (req, res) => void mcpFor(identityOf(res).agentId)(req, res, req.body));
 
   // What the agent may read about its own authority and the merchants it may buy from.
   app.get('/v1/agent/permits', agent, (req, res) => {
-    const agentId = typeof req.query['agentId'] === 'string' ? req.query['agentId'] : undefined;
-    res.json({ permits: gateway.agentPermits(agentId) });
+    const asked = typeof req.query['agentId'] === 'string' ? req.query['agentId'] : undefined;
+    res.json({ permits: gateway.agentPermits(identityOf(res).agentId ?? asked) });
   });
 
   app.get('/v1/catalog', anyone, (req, res) => {
@@ -172,11 +214,11 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
   });
 
   app.get('/v1/orders/:id', anyone, (req, res) => {
-    res.json(gateway.getOrder(param(req, 'id')));
+    res.json(visibleOrder(res, param(req, 'id')));
   });
 
   app.post('/v1/orders/:id/capture', anyone, async (req, res) => {
-    res.json(await gateway.capture(param(req, 'id')));
+    res.json(await gateway.capture(visibleOrder(res, param(req, 'id')).id));
   });
 
   // ── Owner ──
@@ -191,13 +233,14 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
   });
 
   app.post('/v1/mandates/:id/revoke', owner, (req, res) => {
-    const { by } = z.object({ by: z.string().min(1) }).parse(req.body);
-    gateway.revokeMandate(param(req, 'id'), by);
+    const { by } = z.object({ by: z.string().min(1).max(80).optional() }).parse(req.body ?? {});
+    gateway.revokeMandate(param(req, 'id'), who(res, by));
     res.json({ revoked: true });
   });
 
   app.post('/v1/quotes', owner, (req, res) => {
-    res.status(201).json(gateway.approveQuote(req.body));
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    res.status(201).json(gateway.approveQuote({ ...body, approvedBy: who(res, body['approvedBy']) }));
   });
 
   app.get('/v1/approvals', owner, (_req, res) => {
@@ -205,19 +248,19 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
   });
 
   app.post('/v1/approvals/:id/resolve', owner, async (req, res) => {
-    const body = z.object({ approver: z.string().min(1), approve: z.boolean() }).parse(req.body);
-    res.json(await gateway.resolveApproval(param(req, 'id'), body.approver, body.approve));
+    const body = z.object({ approver: z.string().min(1).max(80).optional(), approve: z.boolean() }).parse(req.body);
+    res.json(await gateway.resolveApproval(param(req, 'id'), who(res, body.approver), body.approve));
   });
 
   app.post('/v1/kill', owner, (req, res) => {
-    const body = z.object({ by: z.string().min(1), reason: z.string().default('manual') }).parse(req.body);
-    gateway.kill(body.by, body.reason);
+    const body = z.object({ by: z.string().min(1).max(80).optional(), reason: z.string().max(300).default('manual') }).parse(req.body ?? {});
+    gateway.kill(who(res, body.by), body.reason);
     res.json({ killSwitch: true });
   });
 
   app.post('/v1/resume', owner, (req, res) => {
-    const { by } = z.object({ by: z.string().min(1) }).parse(req.body);
-    gateway.resume(by);
+    const { by } = z.object({ by: z.string().min(1).max(80).optional() }).parse(req.body ?? {});
+    gateway.resume(who(res, by));
     res.json({ killSwitch: false });
   });
 
@@ -227,13 +270,13 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
   });
 
   app.post('/v1/exceptions/:id/approve', owner, async (req, res) => {
-    const body = z.object({ approvedBy: z.string().min(1), override: RemedyProposalSchema.optional() }).parse(req.body);
-    res.json(await gateway.approveRemedy(param(req, 'id'), body.approvedBy, body.override));
+    const body = z.object({ approvedBy: z.string().min(1).max(80).optional(), override: RemedyProposalSchema.optional() }).parse(req.body ?? {});
+    res.json(await gateway.approveRemedy(param(req, 'id'), who(res, body.approvedBy), body.override));
   });
 
   app.post('/v1/refunds', owner, async (req, res) => {
-    const body = z.object({ orderId: z.string().min(1), amountMinor: z.number().int().positive(), approvedBy: z.string().min(1), reason: z.string().min(1) }).parse(req.body);
-    res.json(await gateway.refund(body));
+    const body = z.object({ orderId: z.string().min(1), amountMinor: z.number().int().positive(), approvedBy: z.string().min(1).max(80).optional(), reason: z.string().min(1).max(300) }).parse(req.body);
+    res.json(await gateway.refund({ ...body, approvedBy: who(res, body.approvedBy) }));
   });
 
   app.get('/v1/state', owner, (_req, res) => {
@@ -242,7 +285,8 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
 
   app.get('/v1/dashboard', owner, (_req, res) => {
     res.setHeader('Cache-Control', 'no-store');
-    res.json({ ...gateway.dashboard(), paypal: opts.fake ? 'fake' : 'sandbox' });
+    const id = identityOf(res);
+    res.json({ ...gateway.dashboard(), paypal: opts.fake ? 'fake' : 'sandbox', viewer: { name: id.name ?? null, verified: Boolean(id.name) } });
   });
 
   app.get('/v1/audit', owner, (_req, res) => {
@@ -284,7 +328,7 @@ export function createApp(gateway: Gateway, auth: AuthConfig, opts: AppOptions =
       const { name } = z.object({ name: z.string().min(1).max(80).default('you') }).parse(req.body ?? {});
       res.json({ step: await agentAttempt(gateway, fake, name) });
     });
-    app.post('/dev/fake/payer-approve/:paypalOrderId', (req, res) => {
+    app.post('/dev/fake/payer-approve/:paypalOrderId', owner, (req, res) => {
       fake.simulatePayerApproval(param(req, 'paypalOrderId'));
       res.json({ simulated: true, note: 'FAKE mode only: stands in for the human payer approving in PayPal checkout.' });
     });

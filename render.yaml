@@ -31,3 +31,4 @@ services:
       - key: OWNER_API_TOKEN
         generateValue: true
       # PAYPAL_WEBHOOK_ID is added by hand after the webhook is registered (see docs/DEPLOY.md).
+      # Optional named credentials (see SECURITY.md): OWNER_TOKENS and AGENT_TOKENS, added by hand.

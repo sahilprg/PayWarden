@@ -168,6 +168,8 @@ export class PayPalClient implements PayPalPort {
       transmission_time: h('paypal-transmission-time'),
     };
     if (Object.values(parts).some((v) => !v)) return false;
+    // PayPal signs with a certificate it hosts itself; refuse anything else before asking PayPal.
+    if (!isPayPalCertUrl(parts.cert_url!)) return false;
     // PayPal verifies against the exact bytes it sent, so embed the raw body
     // instead of re-serializing parsed JSON.
     const body = `{"auth_algo":${JSON.stringify(parts.auth_algo)},"cert_url":${JSON.stringify(parts.cert_url)},"transmission_id":${JSON.stringify(parts.transmission_id)},"transmission_sig":${JSON.stringify(parts.transmission_sig)},"transmission_time":${JSON.stringify(parts.transmission_time)},"webhook_id":${JSON.stringify(this.cfg.webhookId)},"webhook_event":${rawBody}}`;
@@ -178,5 +180,15 @@ export class PayPalClient implements PayPalPort {
     });
     const json = (await res.json().catch(() => ({}))) as { verification_status?: string };
     return res.ok && json.verification_status === 'SUCCESS';
+  }
+}
+
+/** True for an https URL on paypal.com (where PayPal hosts its webhook signing certificates). */
+export function isPayPalCertUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    return u.protocol === 'https:' && (u.hostname === 'paypal.com' || u.hostname.endsWith('.paypal.com'));
+  } catch {
+    return false;
   }
 }

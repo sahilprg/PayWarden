@@ -35,6 +35,7 @@ Built for the *Build What's Next with PayPal and AI* hackathon.
 | Hosted deployment on Render (`render.yaml`) | **Live**, running against the PayPal sandbox with Gemini |
 | MCP front door (`/mcp` over Streamable HTTP, and `npm run mcp` over stdio) | Built; tested end to end with the official MCP client over both transports. Not yet tried with a third-party MCP host. |
 | Private visitor playground (`/dashboard?playground=1`) | Built; isolation and limits tested; checked in a real browser |
+| Security hardening: named and bound credentials, rate limits, failed-token throttling, webhook pre-checks, security headers, playground budgets | Built and tested (`test/security.test.ts`); see [SECURITY.md](SECURITY.md) |
 | Merchant-side verifier, demo video | **Not built yet** (see Roadmap) |
 
 Run `npm test` and `npm run lab` to see the first rows for yourself. The first thing to do with real credentials is the sandbox walkthrough below.
@@ -163,6 +164,10 @@ Two credentials, on purpose. An agent can *ask* to pay; only the owner can appro
 **Original work during the submission period:** this repository was created for the hackathon.
 
 ---
+
+## Security
+
+Agents and owners hold different credentials, and an agent's credential can never approve, refund or freeze. Named owner tokens make approvals attributable, and bound agent tokens keep each agent to its own permits. Every route is rate-limited, wrong tokens are throttled, webhooks are verified with PayPal before anything changes, and the public playground runs within AI and memory budgets. The threat model, what is enforced, and what is not claimed: [SECURITY.md](SECURITY.md).
 
 ## Limitations (read before trusting it)
 

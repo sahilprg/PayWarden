@@ -64,23 +64,38 @@ export class HttpAgentApi implements AgentApi {
   }
 }
 
-/** Calls the gateway directly; used by the hosted /mcp endpoint, which sits behind the agent token. */
+/**
+ * Calls the gateway directly; used by the hosted /mcp endpoint, which sits behind the agent token.
+ * When the token is bound to one agent, every call is held to that agent's permits and orders.
+ */
 export class InProcessAgentApi implements AgentApi {
-  constructor(private readonly gateway: Gateway) {}
+  constructor(
+    private readonly gateway: Gateway,
+    private readonly boundAgentId?: string,
+  ) {}
+  private ownOrder(orderId: string) {
+    const order = this.gateway.getOrder(orderId);
+    if (this.boundAgentId && order.proposal.agentId !== this.boundAgentId) throw new GatewayError('ORDER_NOT_FOUND', 'No such order.', 404);
+    return order;
+  }
   async permits(agentId?: string) {
-    return this.gateway.agentPermits(agentId);
+    return this.gateway.agentPermits(this.boundAgentId ?? agentId);
   }
   async catalog(merchantId?: string) {
     return this.gateway.catalog(merchantId);
   }
   authorize(proposal: PaymentProposal) {
-    return this.gateway.authorize(PaymentProposalSchema.parse(proposal));
+    const p = PaymentProposalSchema.parse(proposal);
+    if (this.boundAgentId && p.agentId !== this.boundAgentId) {
+      return Promise.reject(new GatewayError('AGENT_TOKEN_MISMATCH', `This token belongs to agent "${this.boundAgentId}".`, 403));
+    }
+    return this.gateway.authorize(p);
   }
   async getOrder(orderId: string) {
-    return this.gateway.getOrder(orderId);
+    return this.ownOrder(orderId);
   }
   capture(orderId: string) {
-    return this.gateway.capture(orderId);
+    return this.gateway.capture(this.ownOrder(orderId).id);
   }
 }
 

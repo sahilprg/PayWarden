@@ -60,7 +60,7 @@ describe('private playgrounds', () => {
     // Approve the waiting payment, play the payer, capture, and approve the refund.
     const approved = await call('POST', `${apiBase}/v1/approvals/${d.pendingApprovals[0].id}/resolve`, token, { approver: 'Judge', approve: true });
     expect(approved.json.status).toBe('order_created');
-    expect((await call('POST', `${apiBase}/dev/fake/payer-approve/${approved.json.paypalOrderId}`)).status).toBe(200);
+    expect((await call('POST', `${apiBase}/dev/fake/payer-approve/${approved.json.paypalOrderId}`, token)).status).toBe(200);
     expect((await call('POST', `${apiBase}/v1/orders/${approved.json.orderId}/capture`, token)).json.status).toBe('captured');
     const refund = await call('POST', `${apiBase}/v1/exceptions/${d.openExceptions[0].id}/approve`, token, { approvedBy: 'Judge' });
     expect(refund.status).toBe(200);
@@ -102,5 +102,44 @@ describe('private playgrounds', () => {
 
   it('does not offer the scenario on an instance that talks to real PayPal', async () => {
     expect((await call('POST', '/v1/scenario', OWNER, {})).status).toBe(404);
+  });
+});
+
+describe('playground cost and memory caps', () => {
+  it('uses the live AI within budget, then the offline rules, and caps writes per playground', async () => {
+    const { AIBudget, BudgetedAIProvider } = await import('../src/ai/budget.js');
+    let liveCalls = 0;
+    const live = new HeuristicProvider();
+    const counted = Object.assign(Object.create(live), { name: 'live-model', judgeIntent: async (...a: any[]) => { liveCalls++; return (live as any).judgeIntent(...a); } });
+    const shared = new AIBudget(3);
+    const a = new BudgetedAIProvider(counted, new HeuristicProvider(), shared, 2);
+    const b = new BudgetedAIProvider(counted, new HeuristicProvider(), shared, 2);
+    const input = { task: 'buy a charger', proposal: { items: [], description: 'charger' } as any };
+    for (let i = 0; i < 4; i++) await a.judgeIntent(input); // 2 live, then offline
+    for (let i = 0; i < 4; i++) await b.judgeIntent(input); // 1 live (shared budget of 3 used up), then offline
+    expect(liveCalls).toBe(3);
+
+    const pgs = new Playgrounds(new HeuristicProvider(), { writesEach: 2 });
+    const srv = createApp(env.gateway, { agentToken: AGENT, ownerToken: OWNER }, { playgrounds: pgs }).listen(0);
+    await once(srv, 'listening');
+    const url = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    try {
+      const pg = (await (await fetch(`${url}/v1/playground`, { method: 'POST' })).json()) as any;
+      const post = () => fetch(`${url}${pg.apiBase}/v1/kill`, { method: 'POST', headers: { authorization: `Bearer ${pg.token}`, 'content-type': 'application/json' }, body: '{}' });
+      expect((await post()).status).toBe(200);
+      expect((await post()).status).toBe(200);
+      expect((await post()).status).toBe(429);
+      // Reading still works after the write cap.
+      expect((await fetch(`${url}${pg.apiBase}/v1/dashboard`, { headers: { authorization: `Bearer ${pg.token}` } })).status).toBe(200);
+    } finally {
+      srv.close();
+    }
+  });
+
+  it('caps new playgrounds across all visitors', () => {
+    const pgs = new Playgrounds(new HeuristicProvider(), { createdPerHour: 2, perIpPerHour: 10 });
+    expect(pgs.create('1.1.1.1')).toBeDefined();
+    expect(pgs.create('2.2.2.2')).toBeDefined();
+    expect(pgs.create('3.3.3.3')).toBeUndefined();
   });
 });

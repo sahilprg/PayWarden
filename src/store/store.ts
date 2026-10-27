@@ -23,6 +23,7 @@ export class Store {
   exceptions = new Map<string, ExceptionRecord>();
   ledger: LedgerEntry[] = [];
   webhookEvents = new Set<string>();
+  webhookRejections = { total: 0, sinceLastAudit: 0, lastAuditAt: -Infinity };
   killSwitch = false;
 
   /**

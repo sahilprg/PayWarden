@@ -1,3 +1,5 @@
+import { parseTokenMap } from './http/auth.js';
+
 export interface Config {
   port: number;
   publicBaseUrl: string;
@@ -6,6 +8,10 @@ export interface Config {
   openai: { apiKey?: string; baseUrl: string; model: string };
   agentToken: string;
   ownerToken: string;
+  /** Named approver tokens (OWNER_TOKENS="sahil=...,priya=..."). */
+  owners: Record<string, string>;
+  /** Agent tokens bound to one agent (AGENT_TOKENS="travel-shopper=..."). */
+  agents: Record<string, string>;
   signingKeyPem?: string;
   usingDevTokens: boolean;
 }
@@ -19,9 +25,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
 
   const agentToken = env['AGENT_API_TOKEN'];
   const ownerToken = env['OWNER_API_TOKEN'];
+  const owners = parseTokenMap(env['OWNER_TOKENS'], 'OWNER_TOKENS');
+  const agents = parseTokenMap(env['AGENT_TOKENS'], 'AGENT_TOKENS');
   const usingDevTokens = !agentToken || !ownerToken;
   if (usingDevTokens && env['NODE_ENV'] === 'production') {
     throw new Error('AGENT_API_TOKEN and OWNER_API_TOKEN must be set in production.');
+  }
+  // A token shared between two credentials would silently give one the other's powers.
+  const all = [agentToken, ownerToken, ...Object.values(owners), ...Object.values(agents)].filter((t): t is string => Boolean(t));
+  if (new Set(all).size !== all.length) {
+    throw new Error('Every token must be different: the agent, owner, OWNER_TOKENS and AGENT_TOKENS values must not repeat.');
+  }
+  if (env['NODE_ENV'] === 'production' && all.some((t) => t.length < 24)) {
+    throw new Error('In production every token must be at least 24 random characters.');
   }
   const port = Number(env['PORT'] ?? 3000);
 
@@ -43,6 +59,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     agentToken: agentToken ?? 'dev-agent-token',
     ownerToken: ownerToken ?? 'dev-owner-token',
+    owners,
+    agents,
     signingKeyPem: env['MANDATE_SIGNING_KEY_PEM']?.replace(/\\n/g, '\n') || undefined,
     usingDevTokens,
   };

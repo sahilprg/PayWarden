@@ -343,7 +343,10 @@
     env.replaceChildren(
       el('span', { class: `env-pill${data.paypal === 'fake' ? ' env-pill-warn' : ''}` }, 'PayPal ', el('b', { text: data.paypal === 'fake' ? (inPlayground() ? 'simulated' : 'offline fake') : 'sandbox' })),
       el('span', { class: `env-pill${data.aiProvider.startsWith('heuristic') ? ' env-pill-warn' : ''}` }, 'AI ', el('b', { text: data.aiProvider.split(' (')[0] })),
-      el('span', { class: 'env-pill' }, 'Acting as ', el('b', { text: memory.name || 'owner' })),
+      data.viewer && data.viewer.verified
+        ? el('span', { class: 'env-pill', title: 'Your name comes from your own owner token.' }, 'Signed in as ', el('b', { text: data.viewer.name }))
+        : el('span', { class: 'env-pill', title: 'You are using the shared owner token, so the name you typed is recorded as unverified.' },
+            'Acting as ', el('b', { text: memory.name || 'owner' }), inPlayground() ? null : ' (name not verified)'),
     );
   }
 
